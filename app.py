@@ -10,7 +10,7 @@ from matplotlib.figure import Figure
 from constants import BENCH_TICKERS, PERIODS, INTERVALS
 from data import fetch_stock_data, fetch_benchmark
 from metrics import compute_metrics
-from chart import plot_price, plot_volume, plot_scatter, plot_drawdown, plot_rolling_beta, plot_monthly_heatmap
+from chart import plot_price, plot_volume, plot_scatter, plot_drawdown, plot_rolling_beta, plot_rolling_sharpe, plot_monthly_heatmap
 
 
 class App(tk.Tk):
@@ -40,7 +40,7 @@ class App(tk.Tk):
         self.entry.bind("<Return>", lambda _: self._run())
 
         tk.Label(top, text="Period:").pack(side=tk.LEFT)
-        self.period_var = tk.StringVar(value="1y")
+        self.period_var = tk.StringVar(value="2y")
         ttk.Combobox(top, textvariable=self.period_var, width=6, state="readonly",
                      values=PERIODS).pack(side=tk.LEFT, padx=(4, 16))
 
@@ -114,7 +114,8 @@ class App(tk.Tk):
         self.right_view_var = tk.StringVar(value="Returns Scatter")
         right_cb = ttk.Combobox(ctrl_bar, textvariable=self.right_view_var, width=16,
                                 state="readonly",
-                                values=["Returns Scatter", "Drawdown", "Rolling Beta", "Monthly Heatmap"])
+                                values=["Returns Scatter", "Drawdown", "Rolling Beta",
+                                        "Rolling Sharpe", "Monthly Heatmap"])
         right_cb.pack(side=tk.LEFT, padx=(4, 0))
         right_cb.bind("<<ComboboxSelected>>", lambda _: self._redraw_right_pane())
 
@@ -185,36 +186,51 @@ class App(tk.Tk):
 
     def _build_fundamentals_pane(self, frame):
         self._fundamental_vars = {}
-        items = [
+        val_items = [
             ("trailingPE",    "Trailing P/E"),
             ("forwardPE",     "Forward P/E"),
             ("dividendYield", "Dividend Yield"),
         ]
-        for col, (key, label) in enumerate(items):
-            padx = (0, 4) if col == 0 else (28, 4)
-            tk.Label(frame, text=label, fg="#555555").grid(row=0, column=col * 2, sticky=tk.W, padx=padx)
-            var = tk.StringVar(value="—")
-            self._fundamental_vars[key] = var
-            tk.Label(frame, textvariable=var, font=("Courier", 11, "bold")).grid(
-                row=0, column=col * 2 + 1, sticky=tk.W)
+        prox_items = [
+            ("from52wHigh",   "% from 52w High"),
+            ("from52wLow",    "% from 52w Low"),
+            ("fromPeriodHigh","% from Period High"),
+        ]
+        for row_idx, items in enumerate((val_items, prox_items)):
+            pady = (0, 0) if row_idx == 0 else (4, 0)
+            for col, (key, label) in enumerate(items):
+                padx = (0, 4) if col == 0 else (28, 4)
+                tk.Label(frame, text=label, fg="#555555").grid(
+                    row=row_idx, column=col * 2, sticky=tk.W, padx=padx, pady=pady)
+                var = tk.StringVar(value="—")
+                self._fundamental_vars[key] = var
+                tk.Label(frame, textvariable=var, font=("Courier", 11, "bold")).grid(
+                    row=row_idx, column=col * 2 + 1, sticky=tk.W, pady=pady)
 
     # ------------------------------------------------------------------
     # Event handlers
     # ------------------------------------------------------------------
 
     def _run(self):
-        symbol = self.symbol_var.get().strip().upper()
-        if not symbol:
+        raw     = self.symbol_var.get().strip().upper()
+        symbols = [s.strip() for s in raw.split(",") if s.strip()]
+        if not symbols:
             return
+        self.run_btn.config(state=tk.DISABLED)
         self.output.config(state=tk.NORMAL)
         self.output.delete("1.0", tk.END)
         self.output.config(state=tk.DISABLED)
-        self.run_btn.config(state=tk.DISABLED)
         period   = self.period_var.get()
         interval = self.interval_var.get()
         bench    = BENCH_TICKERS[self.bench_var.get()]
+        if len(symbols) > 1:
+            threading.Thread(
+                target=self._fetch_comparison,
+                args=(symbols, period, interval, bench, self.bench_var.get()), daemon=True
+            ).start()
+            return
         threading.Thread(
-            target=self._fetch, args=(symbol, period, interval, bench), daemon=True
+            target=self._fetch, args=(symbols[0], period, interval, bench), daemon=True
         ).start()
 
     def _fetch(self, symbol, period, interval, bench):
@@ -222,7 +238,8 @@ class App(tk.Tk):
             hist, fundamentals = fetch_stock_data(symbol, period, interval)
             bench_hist         = fetch_benchmark(bench, period, interval)
             if hist is not None:
-                self.after(0, self._plot, hist, symbol, period)
+                ed = fundamentals.get("earnings_dates", [])
+                self.after(0, self._plot, hist, symbol, period, ed)
                 self.after(0, self._update_metrics, hist, bench_hist, self.bench_var.get())
                 self.after(0, self._plot_scatter, hist, bench_hist, symbol, self.bench_var.get())
                 self.after(0, self._update_fundamentals, fundamentals)
@@ -230,6 +247,72 @@ class App(tk.Tk):
             print(f"\nError: {e}")
         finally:
             self.run_btn.config(state=tk.NORMAL)
+
+    def _fetch_comparison(self, symbols, period, interval, bench, bench_name):
+        try:
+            bench_hist = fetch_benchmark(bench, period, interval)
+            results = []
+            for sym in symbols:
+                hist, fundamentals = fetch_stock_data(sym, period, interval)
+                if hist is not None:
+                    results.append((sym, compute_metrics(hist, bench_hist), fundamentals))
+            if results:
+                self.after(0, self._show_comparison, results, bench_name)
+        except Exception as e:
+            print(f"\nError: {e}")
+        finally:
+            self.after(0, lambda: self.run_btn.config(state=tk.NORMAL))
+
+    def _show_comparison(self, results, bench_name):
+        win = tk.Toplevel(self)
+        win.title(f"Comparison — {', '.join(r[0] for r in results)}")
+        win.minsize(520, 420)
+
+        frame = tk.Frame(win)
+        frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        tickers = [r[0] for r in results]
+        cols    = ["Metric"] + tickers
+        tree    = ttk.Treeview(frame, columns=cols, show="headings")
+        for col in cols:
+            tree.heading(col, text=col)
+            tree.column(col, width=180 if col == "Metric" else 95,
+                        anchor=tk.W if col == "Metric" else tk.E)
+
+        vsb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        KEYS = ["ann_vol", "cum_return", "ann_cum_return", "sharpe", "sortino",
+                "calmar", "max_drawdown", "beta", "corr", "r_squared",
+                "up_capture", "down_capture"]
+        rows = [
+            ("Annualized Volatility",  "ann_vol",        lambda v: f"{v:.2%}"),
+            ("Cumulative Return",      "cum_return",     lambda v: f"{v:+.2%}"),
+            ("CAGR",                   "ann_cum_return", lambda v: f"{v:+.2%}"),
+            ("Sharpe Ratio",           "sharpe",         lambda v: f"{v:.2f}"),
+            ("Sortino Ratio",          "sortino",        lambda v: f"{v:.2f}"),
+            ("Calmar Ratio",           "calmar",         lambda v: f"{v:.2f}" if not np.isnan(v) else "N/A"),
+            ("Max Drawdown",           "max_drawdown",   lambda v: f"{v:.2%}"),
+            ("Beta",                   "beta",           lambda v: f"{v:.2f}"),
+            ("Correlation",            "corr",           lambda v: f"{v:.4f}"),
+            ("R-Squared",              "r_squared",      lambda v: f"{v:.4f}"),
+            ("Up Capture",             "up_capture",     lambda v: f"{v:.1%}" if not np.isnan(v) else "N/A"),
+            ("Down Capture",           "down_capture",   lambda v: f"{v:.1%}" if not np.isnan(v) else "N/A"),
+            ("Trailing P/E",           "trailingPE",     lambda v: f"{v:.2f}" if v else "N/A"),
+            ("Dividend Yield",         "dividendYield",  lambda v: f"{v:.2f}%" if v else "N/A"),
+        ]
+        for label, key, fmt in rows:
+            row_vals = [label]
+            for _sym, metrics_tuple, fundamentals in results:
+                if key in KEYS:
+                    row_vals.append(fmt(metrics_tuple[KEYS.index(key)]))
+                else:
+                    row_vals.append(fmt(fundamentals.get(key)))
+            tree.insert("", tk.END, values=row_vals)
 
     def _plot_scatter(self, hist, bench_hist, symbol, bench_name):
         self._right_pane_data = (hist, bench_hist, symbol, bench_name)
@@ -249,6 +332,9 @@ class App(tk.Tk):
         elif view == "Rolling Beta":
             plot_rolling_beta(self.ax_scatter, hist, bench_hist, symbol, bench_name)
             self.scatter_fig.autofmt_xdate(rotation=30, ha="right")
+        elif view == "Rolling Sharpe":
+            plot_rolling_sharpe(self.ax_scatter, hist, symbol)
+            self.scatter_fig.autofmt_xdate(rotation=30, ha="right")
         elif view == "Monthly Heatmap":
             plot_monthly_heatmap(self.ax_scatter, hist, symbol)
         self.scatter_fig.tight_layout()
@@ -258,11 +344,11 @@ class App(tk.Tk):
         if hasattr(self, "_last_plot"):
             self._plot(*self._last_plot)
 
-    def _plot(self, hist, symbol, period):
-        self._last_plot = (hist, symbol, period)
+    def _plot(self, hist, symbol, period, earnings_dates=None):
+        self._last_plot = (hist, symbol, period, earnings_dates)
         self.ax_price.cla()
         self.ax_vol.cla()
-        plot_price(self.ax_price, hist, symbol, period, self.log_var.get())
+        plot_price(self.ax_price, hist, symbol, period, self.log_var.get(), earnings_dates)
         plot_volume(self.ax_vol, hist, self.figure)
         self.canvas.draw()
 
@@ -290,6 +376,17 @@ class App(tk.Tk):
         self._fundamental_vars["trailingPE"].set(f"{pe_t:.2f}" if pe_t else "N/A")
         self._fundamental_vars["forwardPE"].set(f"{pe_f:.2f}" if pe_f else "N/A")
         self._fundamental_vars["dividendYield"].set(f"{dy:.2f}%" if dy else "N/A")
+
+        cur = fundamentals.get("currentPrice")
+        h52 = fundamentals.get("fiftyTwoWeekHigh")
+        l52 = fundamentals.get("fiftyTwoWeekLow")
+        ph  = fundamentals.get("periodHigh")
+        self._fundamental_vars["from52wHigh"].set(
+            f"{cur / h52 - 1:+.1%}" if cur and h52 else "N/A")
+        self._fundamental_vars["from52wLow"].set(
+            f"{cur / l52 - 1:+.1%}" if cur and l52 else "N/A")
+        self._fundamental_vars["fromPeriodHigh"].set(
+            f"{cur / ph - 1:+.1%}" if cur and ph else "N/A")
 
 
 class _TextRedirector:

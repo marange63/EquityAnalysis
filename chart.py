@@ -14,7 +14,7 @@ def _get_dates(hist):
     return hist.index.tz_localize(None) if hist.index.tzinfo else hist.index
 
 
-def plot_price(ax, hist, symbol, period, log_scale=False):
+def plot_price(ax, hist, symbol, period, log_scale=False, earnings_dates=None):
     dates = _get_dates(hist)
 
     roll_ret = hist["Close"] / hist["Close"].shift(21) - 1
@@ -34,6 +34,19 @@ def plot_price(ax, hist, symbol, period, log_scale=False):
     ax.set_title(f"{symbol} ({period}) — Close Price & Volume")
     ax.grid(True, linestyle="--", alpha=0.4)
     plt.setp(ax.get_xticklabels(), visible=False)
+
+    if earnings_dates:
+        hist_date_arr = np.array([d.date() for d in hist.index.to_pydatetime()])
+        closes = hist["Close"].values
+        for ed in earnings_dates:
+            pos = np.searchsorted(hist_date_arr, ed)
+            if 0 < pos < len(closes):
+                move = closes[pos] / closes[pos - 1] - 1
+                ax.axvline(x[pos], color=COLOR_DARK, linewidth=0.8, linestyle=":", alpha=0.7)
+                clr = COLOR_GREEN if move >= 0 else COLOR_RED
+                ax.text(x[pos], 0.97, f"{move:+.1%}",
+                        transform=ax.get_xaxis_transform(),
+                        fontsize=6, color=clr, rotation=90, va="top", ha="center")
 
 
 def plot_scatter(ax, hist, bench_hist, symbol, bench_name):
@@ -77,7 +90,7 @@ def plot_drawdown(ax, hist, symbol):
     ax.grid(True, linestyle="--", alpha=0.4)
 
 
-def plot_rolling_beta(ax, hist, bench_hist, symbol, bench_name, window=21):
+def plot_rolling_beta(ax, hist, bench_hist, symbol, bench_name, window=63):
     stock_ret = hist["Close"].pct_change()
     bench_ret = bench_hist["Close"].pct_change()
     s, b = stock_ret.align(bench_ret, join="inner")
@@ -88,6 +101,23 @@ def plot_rolling_beta(ax, hist, bench_hist, symbol, bench_name, window=21):
     ax.axhline(0, color="#aaaaaa", linewidth=0.5, linestyle="--")
     ax.set_ylabel("Beta")
     ax.set_title(f"{symbol} — {window}d Rolling Beta vs {bench_name}")
+    ax.legend(fontsize=8)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b '%y"))
+    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+    ax.grid(True, linestyle="--", alpha=0.4)
+
+
+def plot_rolling_sharpe(ax, hist, symbol, window=63):
+    returns = hist["Close"].pct_change()
+    rolling_sharpe = (
+        returns.rolling(window).mean() / returns.rolling(window).std() * np.sqrt(252)
+    ).dropna()
+    dates = rolling_sharpe.index.tz_localize(None) if rolling_sharpe.index.tzinfo else rolling_sharpe.index
+    ax.plot(dates, rolling_sharpe.values, color=COLOR_BLUE, linewidth=1.2)
+    ax.axhline(1, color=COLOR_GRAY, linewidth=0.8, linestyle="--", label="Sharpe = 1")
+    ax.axhline(0, color="#aaaaaa", linewidth=0.5, linestyle="--")
+    ax.set_ylabel("Sharpe Ratio")
+    ax.set_title(f"{symbol} — {window}d Rolling Sharpe")
     ax.legend(fontsize=8)
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%b '%y"))
     ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
