@@ -42,8 +42,9 @@ No CLI arguments. The app launches a tkinter window directly.
 ├─ main_split (horizontal PanedWindow, 65% / 35%) ──────────────────┤
 │  ┌─ left: outer (vertical PanedWindow) ───┐  ┌─ scatter pane ───┐ │
 │  │ top_row: output  │ metrics             │  │ daily returns    │ │
-│  │ chart: ax_price (price line)           │  │ scatter vs bench │ │
-│  │        ax_vol   (volume bars)          │  └──────────────────┘ │
+│  │ fundamentals bar (P/E, dividend yield) │  │ scatter vs bench │ │
+│  │ chart: ax_price (price line)           │  └──────────────────┘ │
+│  │        ax_vol   (volume bars)          │                       │
 │  └────────────────────────────────────────┘                       │
 └───────────────────────────────────────────────────────────────────┘
 ```
@@ -51,7 +52,7 @@ No CLI arguments. The app launches a tkinter window directly.
 **Metrics pane** default width = half the window width, set via `sash_place()` on `<Map>` with a `nonlocal` one-shot flag. Do not use `unbind(seq, funcid)` on Python 3.13 — throws `TclError` because `<Map>` fires once per child widget.
 
 - `_run()` — clears output, reads controls, spawns a daemon thread calling `_fetch()`
-- `_fetch()` — fetches stock + benchmark data on the background thread, then schedules `_plot()` and `_update_metrics()` back on the main thread via `self.after(0, ...)`
+- `_fetch()` — unpacks `hist, fundamentals = fetch_stock_data(...)`, fetches benchmark, then schedules `_plot()`, `_update_metrics()`, `_plot_scatter()`, and `_update_fundamentals()` via `self.after(0, ...)`
 - `_plot()` — saves args to `self._last_plot`; reads `self.log_var` to set `ax_price` y-scale
 - `_toggle_log()` — re-calls `_plot(*self._last_plot)` if data exists; no re-fetch needed
 - `_TextRedirector` — redirects `sys.stdout` to the ScrolledText output pane (thread-safe via `widget.after`)
@@ -72,3 +73,11 @@ No CLI arguments. The app launches a tkinter window directly.
 Benchmark dropdown options: S&P 500 (`^GSPC`), NASDAQ 100 (`^NDX`), Dow Jones (`^DJI`), Russell 2000 (`^RUT`).
 
 Metrics rows use `pady=1` (no visible gap between rows). Rows are split into two groups — `return_rows` and `bench_rows` — rendered by a shared `_add_rows(rows, start)` helper. A `ttk.Separator` and "vs Benchmark" sub-header are inserted between the two groups. Each row tuple is `(key, label, fg)` — `fg=None` defaults to black, `fg="red"` used for Max Drawdown.
+
+### Fundamentals bar
+
+Compact horizontal pane (`stretch="never"`) between `top_row` and `chart_frame` in the `outer` vertical PanedWindow. Displays three label/value pairs side by side: **Trailing P/E**, **Forward P/E**, **Dividend Yield**.
+
+`fetch_stock_data()` now returns `(hist, fundamentals)` — a tuple. On empty data returns `(None, {})`. The `fundamentals` dict keys are `trailingPE`, `forwardPE`, `dividendYield` (from `stock.info`).
+
+**yfinance quirk (v1.2.0):** `dividendYield` is returned already as a percentage value (e.g. `0.52` means 0.52%), so format with `f"{dy:.2f}%"` — do NOT use `:.2%` which would multiply by 100 again.
