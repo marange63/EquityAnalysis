@@ -61,6 +61,38 @@ def plot_scatter(ax, hist, bench_hist, symbol, bench_name):
     ax.grid(True, linestyle="--", alpha=0.4)
 
 
+def plot_drawdown(ax, hist, symbol):
+    close = hist["Close"]
+    drawdown = (close - close.cummax()) / close.cummax()
+    dates = _get_dates(hist)
+    ax.fill_between(dates, drawdown.values, 0, alpha=0.35, color=COLOR_RED)
+    ax.plot(dates, drawdown.values, color=COLOR_RED, linewidth=0.8)
+    ax.axhline(0, color="#aaaaaa", linewidth=0.5)
+    ax.set_ylabel("Drawdown")
+    ax.set_title(f"{symbol} — Drawdown from Peak")
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f"{v:.0%}"))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b '%y"))
+    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+    ax.grid(True, linestyle="--", alpha=0.4)
+
+
+def plot_rolling_beta(ax, hist, bench_hist, symbol, bench_name, window=21):
+    stock_ret = hist["Close"].pct_change()
+    bench_ret = bench_hist["Close"].pct_change()
+    s, b = stock_ret.align(bench_ret, join="inner")
+    rolling_beta = (s.rolling(window).cov(b) / b.rolling(window).var()).dropna()
+    dates = rolling_beta.index.tz_localize(None) if rolling_beta.index.tzinfo else rolling_beta.index
+    ax.plot(dates, rolling_beta.values, color=COLOR_BLUE, linewidth=1.2)
+    ax.axhline(1, color=COLOR_GRAY, linewidth=0.8, linestyle="--", label="β = 1")
+    ax.axhline(0, color="#aaaaaa", linewidth=0.5, linestyle="--")
+    ax.set_ylabel("Beta")
+    ax.set_title(f"{symbol} — {window}d Rolling Beta vs {bench_name}")
+    ax.legend(fontsize=8)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b '%y"))
+    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+    ax.grid(True, linestyle="--", alpha=0.4)
+
+
 def plot_volume(ax, hist, figure):
     dates = _get_dates(hist)
 

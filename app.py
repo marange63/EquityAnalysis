@@ -9,7 +9,7 @@ from matplotlib.figure import Figure
 from constants import BENCH_TICKERS, PERIODS, INTERVALS
 from data import fetch_stock_data, fetch_benchmark
 from metrics import compute_metrics
-from chart import plot_price, plot_volume, plot_scatter
+from chart import plot_price, plot_volume, plot_scatter, plot_drawdown, plot_rolling_beta
 
 
 class App(tk.Tk):
@@ -103,10 +103,21 @@ class App(tk.Tk):
         self.canvas = FigureCanvasTkAgg(self.figure, master=chart_frame)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # --- Right side: scatter pane ---
+        # --- Right side: chart pane ---
         scatter_frame = tk.Frame(main_split)
         main_split.add(scatter_frame, stretch="always")
 
+        ctrl_bar = tk.Frame(scatter_frame, padx=6, pady=4)
+        ctrl_bar.pack(fill=tk.X)
+        tk.Label(ctrl_bar, text="View:").pack(side=tk.LEFT)
+        self.right_view_var = tk.StringVar(value="Returns Scatter")
+        right_cb = ttk.Combobox(ctrl_bar, textvariable=self.right_view_var, width=16,
+                                state="readonly",
+                                values=["Returns Scatter", "Drawdown", "Rolling Beta"])
+        right_cb.pack(side=tk.LEFT, padx=(4, 0))
+        right_cb.bind("<<ComboboxSelected>>", lambda _: self._redraw_right_pane())
+
+        self._right_pane_data = None
         self.scatter_fig = Figure(tight_layout=True)
         self.ax_scatter  = self.scatter_fig.add_subplot(111)
         self.scatter_canvas = FigureCanvasTkAgg(self.scatter_fig, master=scatter_frame)
@@ -216,8 +227,24 @@ class App(tk.Tk):
             self.run_btn.config(state=tk.NORMAL)
 
     def _plot_scatter(self, hist, bench_hist, symbol, bench_name):
+        self._right_pane_data = (hist, bench_hist, symbol, bench_name)
+        self._redraw_right_pane()
+
+    def _redraw_right_pane(self):
+        if self._right_pane_data is None:
+            return
+        hist, bench_hist, symbol, bench_name = self._right_pane_data
         self.ax_scatter.cla()
-        plot_scatter(self.ax_scatter, hist, bench_hist, symbol, bench_name)
+        view = self.right_view_var.get()
+        if view == "Returns Scatter":
+            plot_scatter(self.ax_scatter, hist, bench_hist, symbol, bench_name)
+        elif view == "Drawdown":
+            plot_drawdown(self.ax_scatter, hist, symbol)
+            self.scatter_fig.autofmt_xdate(rotation=30, ha="right")
+        elif view == "Rolling Beta":
+            plot_rolling_beta(self.ax_scatter, hist, bench_hist, symbol, bench_name)
+            self.scatter_fig.autofmt_xdate(rotation=30, ha="right")
+        self.scatter_fig.tight_layout()
         self.scatter_canvas.draw()
 
     def _toggle_log(self):
