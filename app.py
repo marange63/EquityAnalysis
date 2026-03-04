@@ -87,6 +87,11 @@ class App(tk.Tk):
         top_row.add(metrics_frame, stretch="never", minsize=200)
         self._build_metrics_pane(metrics_frame)
 
+        # Fundamentals bar
+        fundamentals_frame = tk.Frame(outer, padx=14, pady=6, relief=tk.SUNKEN, bd=1)
+        outer.add(fundamentals_frame, stretch="never")
+        self._build_fundamentals_pane(fundamentals_frame)
+
         # Price + volume charts
         chart_frame = tk.Frame(outer)
         outer.add(chart_frame, stretch="always")
@@ -162,6 +167,21 @@ class App(tk.Tk):
         _add_rows(bench_rows, start=next_row + 2)
         frame.columnconfigure(1, weight=1)
 
+    def _build_fundamentals_pane(self, frame):
+        self._fundamental_vars = {}
+        items = [
+            ("trailingPE",    "Trailing P/E"),
+            ("forwardPE",     "Forward P/E"),
+            ("dividendYield", "Dividend Yield"),
+        ]
+        for col, (key, label) in enumerate(items):
+            padx = (0, 4) if col == 0 else (28, 4)
+            tk.Label(frame, text=label, fg="#555555").grid(row=0, column=col * 2, sticky=tk.W, padx=padx)
+            var = tk.StringVar(value="—")
+            self._fundamental_vars[key] = var
+            tk.Label(frame, textvariable=var, font=("Courier", 11, "bold")).grid(
+                row=0, column=col * 2 + 1, sticky=tk.W)
+
     # ------------------------------------------------------------------
     # Event handlers
     # ------------------------------------------------------------------
@@ -183,12 +203,13 @@ class App(tk.Tk):
 
     def _fetch(self, symbol, period, interval, bench):
         try:
-            hist       = fetch_stock_data(symbol, period, interval)
-            bench_hist = fetch_benchmark(bench, period, interval)
+            hist, fundamentals = fetch_stock_data(symbol, period, interval)
+            bench_hist         = fetch_benchmark(bench, period, interval)
             if hist is not None:
                 self.after(0, self._plot, hist, symbol, period)
                 self.after(0, self._update_metrics, hist, bench_hist, self.bench_var.get())
                 self.after(0, self._plot_scatter, hist, bench_hist, symbol, self.bench_var.get())
+                self.after(0, self._update_fundamentals, fundamentals)
         except Exception as e:
             print(f"\nError: {e}")
         finally:
@@ -222,6 +243,14 @@ class App(tk.Tk):
         self._metric_vars["beta"].set(f"{beta:.2f}  vs {bench_name}")
         self._metric_vars["corr"].set(f"{corr:.4f}")
         self._metric_vars["r_squared"].set(f"{r_squared:.4f}")
+
+    def _update_fundamentals(self, fundamentals):
+        pe_t = fundamentals.get("trailingPE")
+        pe_f = fundamentals.get("forwardPE")
+        dy   = fundamentals.get("dividendYield")
+        self._fundamental_vars["trailingPE"].set(f"{pe_t:.2f}" if pe_t else "N/A")
+        self._fundamental_vars["forwardPE"].set(f"{pe_f:.2f}" if pe_f else "N/A")
+        self._fundamental_vars["dividendYield"].set(f"{dy:.2f}%" if dy else "N/A")
 
 
 class _TextRedirector:
