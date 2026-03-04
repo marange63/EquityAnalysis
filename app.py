@@ -1,8 +1,8 @@
+import math
 import sys
 import tkinter as tk
 from tkinter import scrolledtext, ttk, filedialog
 import threading
-import numpy as np
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
@@ -10,7 +10,8 @@ from matplotlib.figure import Figure
 from constants import BENCH_TICKERS, PERIODS, INTERVALS, COLOR_GREEN, COLOR_RED
 from data import fetch_stock_data, fetch_benchmark
 from metrics import compute_metrics
-from chart import plot_price, plot_volume, plot_scatter, plot_drawdown, plot_rolling_beta, plot_rolling_sharpe, plot_monthly_heatmap
+from chart import (plot_price, plot_volume, plot_scatter, plot_drawdown,
+                   plot_rolling_beta, plot_rolling_sharpe, plot_monthly_heatmap)
 
 
 _METRIC_TIPS = {
@@ -26,6 +27,23 @@ _METRIC_TIPS = {
     "r_squared":      "R-Squared  (corr²)\n% of stock variance explained by benchmark",
     "up_capture":     "Up Capture\nStock mean return on bench-up days / bench mean\n>100% = outperforms in rallies",
     "down_capture":   "Down Capture\nStock mean return on bench-down days / bench mean\n<100% = loses less in sell-offs",
+}
+
+_METRIC_FORMATS = {
+    "ann_vol":        lambda v: f"{v:.2%}",
+    "cum_return":     lambda v: f"{v:+.2%}",
+    "ann_cum_return": lambda v: f"{v:+.2%}",
+    "sharpe":         lambda v: f"{v:.2f}",
+    "sortino":        lambda v: f"{v:.2f}",
+    "calmar":         lambda v: f"{v:.2f}" if not math.isnan(v) else "N/A",
+    "max_drawdown":   lambda v: f"{v:.2%}",
+    "beta":           lambda v: f"{v:.2f}",
+    "corr":           lambda v: f"{v:.4f}",
+    "r_squared":      lambda v: f"{v:.4f}",
+    "up_capture":     lambda v: f"{v:.1%}" if not math.isnan(v) else "N/A",
+    "down_capture":   lambda v: f"{v:.1%}" if not math.isnan(v) else "N/A",
+    "trailingPE":     lambda v: f"{v:.2f}" if v else "N/A",
+    "dividendYield":  lambda v: f"{v:.2f}%" if v else "N/A",
 }
 
 
@@ -78,12 +96,33 @@ class App(tk.Tk):
         tk.Checkbutton(top, text="Log Scale", variable=self.log_var,
                        command=self._toggle_log).pack(side=tk.LEFT, padx=(16, 0))
 
+    def _build_status_bar(self):
+        self._status_var = tk.StringVar(value="Ready")
+        tk.Label(self, textvariable=self._status_var, anchor=tk.W, relief=tk.SUNKEN,
+                 bd=1, padx=6, font=("Helvetica", 9), fg="#555555"
+                 ).pack(side=tk.BOTTOM, fill=tk.X)
+
     def _build_panes(self):
-        # Outer horizontal split: left (output+metrics+charts) | right (scatter)
         main_split = tk.PanedWindow(self, orient=tk.HORIZONTAL, sashrelief=tk.RAISED, sashwidth=6)
         main_split.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
 
-        # --- Left side ---
+        top_row = self._build_left_pane(main_split)
+        self._build_right_pane(main_split)
+
+        _sash_set = False
+
+        def _set_sash(_event=None):
+            nonlocal _sash_set
+            if _sash_set:
+                return
+            _sash_set = True
+            self.update_idletasks()
+            main_split.sash_place(0, int(self.winfo_width() * 0.65), 0)
+            top_row.sash_place(0, top_row.winfo_width() // 2, 0)
+
+        self.bind("<Map>", _set_sash)
+
+    def _build_left_pane(self, main_split):
         left_frame = tk.Frame(main_split)
         main_split.add(left_frame, stretch="always")
 
@@ -93,28 +132,24 @@ class App(tk.Tk):
         top_row = tk.PanedWindow(outer, orient=tk.HORIZONTAL, sashrelief=tk.RAISED, sashwidth=6)
         outer.add(top_row, stretch="always")
 
-        # Output pane
         self.output = scrolledtext.ScrolledText(
             top_row, font=("Courier", 10), state=tk.DISABLED,
             wrap=tk.NONE, padx=6, pady=6, height=10
         )
         top_row.add(self.output, stretch="always")
 
-        # Metrics pane
         metrics_frame = tk.Frame(top_row, padx=14, pady=14, relief=tk.SUNKEN, bd=1)
         top_row.add(metrics_frame, stretch="never", minsize=200)
         self._build_metrics_pane(metrics_frame)
 
-        # Fundamentals bar
         fundamentals_frame = tk.Frame(outer, padx=14, pady=6, relief=tk.SUNKEN, bd=1)
         outer.add(fundamentals_frame, stretch="never")
         self._build_fundamentals_pane(fundamentals_frame)
 
-        # Price + volume charts
         chart_frame = tk.Frame(outer)
         outer.add(chart_frame, stretch="always")
 
-        self.figure = Figure(figsize=(8, 3), tight_layout=True)
+        self.figure   = Figure(figsize=(8, 3), tight_layout=True)
         self.ax_price = self.figure.add_subplot(211)
         self.ax_vol   = self.figure.add_subplot(212, sharex=self.ax_price)
 
@@ -123,7 +158,9 @@ class App(tk.Tk):
         self.canvas.get_tk_widget().bind(
             "<Button-3>", lambda e: self._show_chart_menu(e, self.figure))
 
-        # --- Right side: chart pane ---
+        return top_row
+
+    def _build_right_pane(self, main_split):
         scatter_frame = tk.Frame(main_split)
         main_split.add(scatter_frame, stretch="always")
 
@@ -138,39 +175,19 @@ class App(tk.Tk):
         right_cb.pack(side=tk.LEFT, padx=(4, 0))
         right_cb.bind("<<ComboboxSelected>>", lambda _: self._redraw_right_pane())
 
-        self._right_pane_data = None
-        self.scatter_fig = Figure(tight_layout=True)
-        self.ax_scatter  = self.scatter_fig.add_subplot(111)
-        self.scatter_canvas = FigureCanvasTkAgg(self.scatter_fig, master=scatter_frame)
+        self._right_pane_data   = None
+        self.scatter_fig        = Figure(tight_layout=True)
+        self.ax_scatter         = self.scatter_fig.add_subplot(111)
+        self.scatter_canvas     = FigureCanvasTkAgg(self.scatter_fig, master=scatter_frame)
         self.scatter_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         self.scatter_canvas.get_tk_widget().bind(
             "<Button-3>", lambda e: self._show_chart_menu(e, self.scatter_fig))
-
-        # Set initial sash positions once window is rendered
-        _sash_set = False
-
-        def _set_sash(_event=None):
-            nonlocal _sash_set
-            if _sash_set:
-                return
-            _sash_set = True
-            self.update_idletasks()
-            main_split.sash_place(0, int(self.winfo_width() * 0.65), 0)
-            top_row.sash_place(0, top_row.winfo_width() // 2, 0)
-
-        self.bind("<Map>", _set_sash)
-
-    def _build_status_bar(self):
-        self._status_var = tk.StringVar(value="Ready")
-        tk.Label(self, textvariable=self._status_var, anchor=tk.W, relief=tk.SUNKEN,
-                 bd=1, padx=6, font=("Helvetica", 9), fg="#555555"
-                 ).pack(side=tk.BOTTOM, fill=tk.X)
 
     def _build_metrics_pane(self, frame):
         tk.Label(frame, text="Return Metrics", font=("Helvetica", 11, "bold"),
                  anchor=tk.W).grid(row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 10))
 
-        self._metric_vars  = {}
+        self._metric_vars   = {}
         self._metric_labels = {}
 
         return_rows = [
@@ -197,7 +214,7 @@ class App(tk.Tk):
                 if key in _METRIC_TIPS:
                     _Tooltip(lbl_text, _METRIC_TIPS[key])
                 var = tk.StringVar(value="—")
-                self._metric_vars[key] = var
+                self._metric_vars[key]   = var
                 lbl_val = tk.Label(frame, textvariable=var, anchor=tk.E,
                                    font=("Courier", 11, "bold"), fg=fg or "black")
                 lbl_val.grid(row=i, column=1, sticky=tk.E)
@@ -223,9 +240,9 @@ class App(tk.Tk):
             ("dividendYield", "Dividend Yield"),
         ]
         prox_items = [
-            ("from52wHigh",   "% from 52w High"),
-            ("from52wLow",    "% from 52w Low"),
-            ("fromPeriodHigh","% from Period High"),
+            ("from52wHigh",    "% from 52w High"),
+            ("from52wLow",     "% from 52w Low"),
+            ("fromPeriodHigh", "% from Period High"),
         ]
         for row_idx, items in enumerate((val_items, prox_items)):
             pady = (0, 0) if row_idx == 0 else (4, 0)
@@ -284,7 +301,7 @@ class App(tk.Tk):
             self.after(0, self._status_var.set, f"Error: {e}")
             print(f"\nError: {e}")
         finally:
-            self.run_btn.config(state=tk.NORMAL)
+            self.after(0, lambda: self.run_btn.config(state=tk.NORMAL))
 
     def _fetch_comparison(self, symbols, period, interval, bench, bench_name):
         try:
@@ -305,55 +322,7 @@ class App(tk.Tk):
             self.after(0, lambda: self.run_btn.config(state=tk.NORMAL))
 
     def _show_comparison(self, results, bench_name):
-        win = tk.Toplevel(self)
-        win.title(f"Comparison — {', '.join(r[0] for r in results)}")
-        win.minsize(520, 420)
-
-        frame = tk.Frame(win)
-        frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        tickers = [r[0] for r in results]
-        cols    = ["Metric"] + tickers
-        tree    = ttk.Treeview(frame, columns=cols, show="headings")
-        for col in cols:
-            tree.heading(col, text=col)
-            tree.column(col, width=180 if col == "Metric" else 95,
-                        anchor=tk.W if col == "Metric" else tk.E)
-
-        vsb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
-        tree.configure(yscrollcommand=vsb.set)
-        tree.grid(row=0, column=0, sticky="nsew")
-        vsb.grid(row=0, column=1, sticky="ns")
-        frame.rowconfigure(0, weight=1)
-        frame.columnconfigure(0, weight=1)
-
-        KEYS = ["ann_vol", "cum_return", "ann_cum_return", "sharpe", "sortino",
-                "calmar", "max_drawdown", "beta", "corr", "r_squared",
-                "up_capture", "down_capture"]
-        rows = [
-            ("Annualized Volatility",  "ann_vol",        lambda v: f"{v:.2%}"),
-            ("Cumulative Return",      "cum_return",     lambda v: f"{v:+.2%}"),
-            ("CAGR",                   "ann_cum_return", lambda v: f"{v:+.2%}"),
-            ("Sharpe Ratio",           "sharpe",         lambda v: f"{v:.2f}"),
-            ("Sortino Ratio",          "sortino",        lambda v: f"{v:.2f}"),
-            ("Calmar Ratio",           "calmar",         lambda v: f"{v:.2f}" if not np.isnan(v) else "N/A"),
-            ("Max Drawdown",           "max_drawdown",   lambda v: f"{v:.2%}"),
-            ("Beta",                   "beta",           lambda v: f"{v:.2f}"),
-            ("Correlation",            "corr",           lambda v: f"{v:.4f}"),
-            ("R-Squared",              "r_squared",      lambda v: f"{v:.4f}"),
-            ("Up Capture",             "up_capture",     lambda v: f"{v:.1%}" if not np.isnan(v) else "N/A"),
-            ("Down Capture",           "down_capture",   lambda v: f"{v:.1%}" if not np.isnan(v) else "N/A"),
-            ("Trailing P/E",           "trailingPE",     lambda v: f"{v:.2f}" if v else "N/A"),
-            ("Dividend Yield",         "dividendYield",  lambda v: f"{v:.2f}%" if v else "N/A"),
-        ]
-        for label, key, fmt in rows:
-            row_vals = [label]
-            for _sym, metrics_tuple, fundamentals in results:
-                if key in KEYS:
-                    row_vals.append(fmt(metrics_tuple[KEYS.index(key)]))
-                else:
-                    row_vals.append(fmt(fundamentals.get(key)))
-            tree.insert("", tk.END, values=row_vals)
+        ComparisonWindow(self, results, bench_name)
 
     def _plot_scatter(self, hist, bench_hist, symbol, bench_name):
         self._right_pane_data = (hist, bench_hist, symbol, bench_name)
@@ -394,40 +363,29 @@ class App(tk.Tk):
         self.canvas.draw()
 
     def _update_metrics(self, hist, bench_hist, bench_name):
-        ann_vol, cum_return, ann_cum_return, sharpe, sortino, calmar, \
-            max_drawdown, beta, corr, r_squared, up_capture, down_capture = \
-            compute_metrics(hist, bench_hist)
-        self._metric_vars["ann_vol"].set(f"{ann_vol:.2%}")
-        self._metric_vars["cum_return"].set(f"{cum_return:+.2%}")
-        self._metric_vars["ann_cum_return"].set(f"{ann_cum_return:+.2%}")
-        self._metric_vars["sharpe"].set(f"{sharpe:.2f}")
-        self._metric_vars["sortino"].set(f"{sortino:.2f}")
-        self._metric_vars["calmar"].set(f"{calmar:.2f}" if not np.isnan(calmar) else "N/A")
-        self._metric_vars["max_drawdown"].set(f"{max_drawdown:.2%}")
-        self._metric_vars["beta"].set(f"{beta:.2f}  vs {bench_name}")
-        self._metric_vars["corr"].set(f"{corr:.4f}")
-        self._metric_vars["r_squared"].set(f"{r_squared:.4f}")
-        self._metric_vars["up_capture"].set(f"{up_capture:.1%}" if not np.isnan(up_capture) else "N/A")
-        self._metric_vars["down_capture"].set(f"{down_capture:.1%}" if not np.isnan(down_capture) else "N/A")
+        m = compute_metrics(hist, bench_hist)
+        for key, var in self._metric_vars.items():
+            var.set(_METRIC_FORMATS[key](getattr(m, key)))
+        self._metric_vars["beta"].set(f"{m.beta:.2f}  vs {bench_name}")
 
         # Dynamic value coloring
         self._metric_labels["cum_return"].config(
-            fg=COLOR_GREEN if cum_return > 0 else COLOR_RED)
+            fg=COLOR_GREEN if m.cum_return > 0 else COLOR_RED)
         self._metric_labels["ann_cum_return"].config(
-            fg=COLOR_GREEN if ann_cum_return > 0 else COLOR_RED)
+            fg=COLOR_GREEN if m.ann_cum_return > 0 else COLOR_RED)
         self._metric_labels["sharpe"].config(
-            fg=COLOR_GREEN if sharpe > 1 else (COLOR_RED if sharpe < 0 else "black"))
+            fg=COLOR_GREEN if m.sharpe > 1 else (COLOR_RED if m.sharpe < 0 else "black"))
         self._metric_labels["sortino"].config(
-            fg=COLOR_GREEN if sortino > 1 else (COLOR_RED if sortino < 0 else "black"))
-        if not np.isnan(calmar):
+            fg=COLOR_GREEN if m.sortino > 1 else (COLOR_RED if m.sortino < 0 else "black"))
+        if not math.isnan(m.calmar):
             self._metric_labels["calmar"].config(
-                fg=COLOR_GREEN if calmar > 1 else (COLOR_RED if calmar < 0 else "black"))
-        if not np.isnan(up_capture):
+                fg=COLOR_GREEN if m.calmar > 1 else (COLOR_RED if m.calmar < 0 else "black"))
+        if not math.isnan(m.up_capture):
             self._metric_labels["up_capture"].config(
-                fg=COLOR_GREEN if up_capture > 1 else COLOR_RED)
-        if not np.isnan(down_capture):
+                fg=COLOR_GREEN if m.up_capture > 1 else COLOR_RED)
+        if not math.isnan(m.down_capture):
             self._metric_labels["down_capture"].config(
-                fg=COLOR_GREEN if down_capture < 1 else COLOR_RED)
+                fg=COLOR_GREEN if m.down_capture < 1 else COLOR_RED)
 
     def _update_fundamentals(self, fundamentals):
         pe_t = fundamentals.get("trailingPE")
@@ -448,7 +406,6 @@ class App(tk.Tk):
         self._fundamental_vars["fromPeriodHigh"].set(
             f"{cur / ph - 1:+.1%}" if cur and ph else "N/A")
 
-
     def _show_chart_menu(self, event, figure):
         menu = tk.Menu(self, tearoff=0)
         menu.add_command(label="Save as PNG…", command=lambda: self._save_chart(figure))
@@ -462,6 +419,57 @@ class App(tk.Tk):
         )
         if path:
             figure.savefig(path, dpi=150, bbox_inches="tight")
+
+
+class ComparisonWindow(tk.Toplevel):
+    _ROWS = [
+        ("Annualized Volatility", "ann_vol"),
+        ("Cumulative Return",     "cum_return"),
+        ("CAGR",                  "ann_cum_return"),
+        ("Sharpe Ratio",          "sharpe"),
+        ("Sortino Ratio",         "sortino"),
+        ("Calmar Ratio",          "calmar"),
+        ("Max Drawdown",          "max_drawdown"),
+        ("Beta",                  "beta"),
+        ("Correlation",           "corr"),
+        ("R-Squared",             "r_squared"),
+        ("Up Capture",            "up_capture"),
+        ("Down Capture",          "down_capture"),
+        ("Trailing P/E",          "trailingPE"),
+        ("Dividend Yield",        "dividendYield"),
+    ]
+
+    def __init__(self, parent, results, bench_name):
+        super().__init__(parent)
+        self.title(f"Comparison — {', '.join(r[0] for r in results)}")
+        self.minsize(520, 420)
+        self._build(results, bench_name)
+
+    def _build(self, results, bench_name):
+        frame = tk.Frame(self)
+        frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        tickers = [r[0] for r in results]
+        cols    = ["Metric"] + tickers
+        tree    = ttk.Treeview(frame, columns=cols, show="headings")
+        for col in cols:
+            tree.heading(col, text=col)
+            tree.column(col, width=180 if col == "Metric" else 95,
+                        anchor=tk.W if col == "Metric" else tk.E)
+
+        vsb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        for label, key in self._ROWS:
+            row_vals = [label]
+            for _sym, metrics, fundamentals in results:
+                val = getattr(metrics, key) if hasattr(metrics, key) else fundamentals.get(key)
+                row_vals.append(_METRIC_FORMATS[key](val))
+            tree.insert("", tk.END, values=row_vals)
 
 
 class _TextRedirector:
