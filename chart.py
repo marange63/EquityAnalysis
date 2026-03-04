@@ -14,7 +14,14 @@ def _get_dates(hist):
     return hist.index.tz_localize(None) if hist.index.tzinfo else hist.index
 
 
-def plot_price(ax, hist, symbol, period, log_scale=False, earnings_info=None, analyst_target=None):
+def _auto_date_axis(ax):
+    """Apply an adaptive date locator/formatter that avoids label overlap."""
+    locator = mdates.AutoDateLocator(minticks=4, maxticks=9)
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
+
+
+def plot_price(ax, hist, symbol, period, log_scale=False, earnings_info=None, analyst_target=None, ma_windows=None):
     dates = _get_dates(hist)
 
     roll_ret = hist["Close"] / hist["Close"].shift(21) - 1
@@ -45,7 +52,14 @@ def plot_price(ax, hist, symbol, period, log_scale=False, earnings_info=None, an
                        label=f"Target ${mean:.2f}")
             if low and high:
                 ax.axhspan(low, high, alpha=0.06, color=COLOR_BLUE)
-            ax.legend(fontsize=7, loc="upper left")
+
+    # Moving averages
+    _MA_COLORS = {50: COLOR_ORANGE, 200: COLOR_BLUE}
+    if ma_windows:
+        for w in ma_windows:
+            ma = hist["Close"].rolling(w).mean()
+            ax.plot(dates, ma, color=_MA_COLORS.get(w, COLOR_GRAY),
+                    linewidth=1.0, linestyle="--", label=f"MA{w}", alpha=0.85)
 
     # Earnings markers — line color shows EPS beat (green) / miss (red) / unknown (gray)
     if earnings_info:
@@ -62,6 +76,11 @@ def plot_price(ax, hist, symbol, period, log_scale=False, earnings_info=None, an
                 ax.text(x[pos], 0.97, f"{move:+.1%}",
                         transform=ax.get_xaxis_transform(),
                         fontsize=6, color=clr, rotation=90, va="top", ha="center")
+
+    # Consolidated legend (analyst target + MAs)
+    handles, labels = ax.get_legend_handles_labels()
+    if handles:
+        ax.legend(handles, labels, fontsize=7, loc="upper left")
 
 
 def plot_scatter(ax, hist, bench_hist, symbol, bench_name):
@@ -100,8 +119,7 @@ def plot_drawdown(ax, hist, symbol):
     ax.set_ylabel("Drawdown")
     ax.set_title(f"{symbol} — Drawdown from Peak")
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f"{v:.0%}"))
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b '%y"))
-    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+    _auto_date_axis(ax)
     ax.grid(True, linestyle="--", alpha=0.4)
 
 
@@ -127,8 +145,7 @@ def plot_rolling_beta(ax, hist, bench_hist, symbol, bench_name, window=63):
     ax.set_ylabel("Beta")
     ax.set_title(f"{symbol} — {window}d Rolling Beta vs {bench_name}")
     ax.legend(fontsize=8)
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b '%y"))
-    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+    _auto_date_axis(ax)
     ax.grid(True, linestyle="--", alpha=0.4)
 
 
@@ -154,8 +171,7 @@ def plot_rolling_sharpe(ax, hist, symbol, window=63):
     ax.set_ylabel("Sharpe Ratio")
     ax.set_title(f"{symbol} — {window}d Rolling Sharpe")
     ax.legend(fontsize=8)
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b '%y"))
-    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+    _auto_date_axis(ax)
     ax.grid(True, linestyle="--", alpha=0.4)
 
 
@@ -196,6 +212,42 @@ def plot_volume(ax, hist, figure):
     ax.axhline(med_vol, color=COLOR_DARK, linewidth=0.8, linestyle="--")
     ax.set_ylabel("Volume")
     ax.grid(True, linestyle="--", alpha=0.4)
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b '%y"))
-    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+    _auto_date_axis(ax)
     figure.autofmt_xdate(rotation=30, ha="right")
+
+
+def plot_volatility_cone(ax, hist, symbol, atm_iv=None):
+    WINDOWS = [10, 21, 63, 126, 252]
+    returns = hist["Close"].pct_change().dropna()
+
+    pct_25, pct_50, pct_75, current_rv = [], [], [], []
+    for w in WINDOWS:
+        if len(returns) < w:
+            pct_25.append(np.nan)
+            pct_50.append(np.nan)
+            pct_75.append(np.nan)
+            current_rv.append(np.nan)
+            continue
+        rv_series = returns.rolling(w).std().dropna() * np.sqrt(252)
+        pct_25.append(float(np.nanpercentile(rv_series, 25)))
+        pct_50.append(float(np.nanpercentile(rv_series, 50)))
+        pct_75.append(float(np.nanpercentile(rv_series, 75)))
+        current_rv.append(float(rv_series.iloc[-1]))
+
+    ax.fill_between(WINDOWS, pct_25, pct_75, alpha=0.18, color=COLOR_BLUE, label="IQR (25–75th pctl)")
+    ax.plot(WINDOWS, pct_50, color=COLOR_BLUE, linewidth=1.5, linestyle="--", label="Median RV")
+    ax.plot(WINDOWS, current_rv, color=COLOR_ORANGE, linewidth=1.5,
+            marker="o", markersize=5, label="Current RV")
+
+    if atm_iv is not None:
+        ax.axhline(atm_iv, color=COLOR_RED, linewidth=1.0, linestyle=":",
+                   alpha=0.9, label=f"ATM IV {atm_iv:.1%}")
+
+    ax.set_xticks(WINDOWS)
+    ax.set_xticklabels([f"{w}d" for w in WINDOWS])
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f"{v:.0%}"))
+    ax.set_xlabel("Lookback Window")
+    ax.set_ylabel("Annualized Volatility")
+    ax.set_title(f"{symbol} — Volatility Cone")
+    ax.legend(fontsize=8)
+    ax.grid(True, linestyle="--", alpha=0.4)

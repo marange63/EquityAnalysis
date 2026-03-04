@@ -27,7 +27,7 @@ No CLI arguments. The app launches a tkinter window directly.
 |------|---------------|
 | `main.py` | Entry point only (4 lines) |
 | `app.py` | `App(tk.Tk)`, `ComparisonWindow(tk.Toplevel)`, `_TextRedirector`, `_Tooltip` |
-| `chart.py` | `plot_price()`, `plot_volume()`, `plot_scatter()`, `plot_drawdown()`, `plot_rolling_beta()`, `plot_rolling_sharpe()`, `plot_monthly_heatmap()` |
+| `chart.py` | `plot_price()`, `plot_volume()`, `plot_scatter()`, `plot_drawdown()`, `plot_rolling_beta()`, `plot_rolling_sharpe()`, `plot_monthly_heatmap()`, `plot_volatility_cone()` |
 | `metrics.py` | `Metrics` dataclass + `compute_metrics()` — pure analytics |
 | `data.py` | `fetch_stock_data()`, `fetch_benchmark()` — yfinance calls |
 | `constants.py` | `BENCH_TICKERS`, `PERIODS`, `INTERVALS`, chart color constants |
@@ -38,29 +38,32 @@ No CLI arguments. The app launches a tkinter window directly.
 
 ```
 ┌─ top bar ─────────────────────────────────────────────────────────┐
-│ Symbol | Period | Interval | Benchmark | Run | Log Scale          │
+│ Symbol | Period | Interval | Benchmark | Run | Log Scale | MA50 | MA200 │
 ├─ main_split (horizontal PanedWindow, 65% / 35%) ──────────────────┤
-│  ┌─ left: outer (vertical PanedWindow) ───┐  ┌─ right pane ─────┐ │
-│  │ top_row: output  │ metrics             │  │ View: [dropdown] │ │
-│  │ fundamentals bar (valuations + 52w)    │  │ • Returns Scatter│ │
-│  │ chart: ax_price (price line)           │  │ • Drawdown       │ │
-│  │        ax_vol   (volume bars)          │  │ • Rolling Beta   │ │
-│  └────────────────────────────────────────┘  │ • Rolling Sharpe │ │
-│                                              │ • Monthly Heatmap│ │
+│  ┌─ left: outer (vertical PanedWindow) ───┐  ┌─ right_outer ────┐ │
+│  │ fundamentals bar (valuations + 52w)    │  │ top_row:         │ │
+│  │ chart: ax_price (price line)           │  │  output│ metrics │ │
+│  │        ax_vol   (volume bars)          │  ├──────────────────┤ │
+│  └────────────────────────────────────────┘  │ View: [dropdown] │ │
+│                                              │ scatter/view     │ │
+│                                              │ canvas           │ │
 │                                              └──────────────────┘ │
 ├─ status bar (BOTTOM) ─────────────────────────────────────────────┤
 └───────────────────────────────────────────────────────────────────┘
 ```
 
-**Metrics pane** default width = half the window width, set via `sash_place()` on `<Map>` with a `nonlocal` one-shot flag. Do not use `unbind(seq, funcid)` on Python 3.13 — throws `TclError` because `<Map>` fires once per child widget.
+Sashes initialised on `<Map>` with a `nonlocal _sash_set` one-shot flag (do NOT use `unbind(seq, funcid)` on Python 3.13 — throws `TclError`). Three sashes set:
+- `main_split` at 65% of window width
+- `top_row` (horizontal) at 50% of its own width (output | metrics)
+- `right_outer` (vertical) at 45% of its own height (top_row | scatter chart)
 
-- `_build_panes()` — delegates to `_build_left_pane(main_split)` (returns `top_row`) and `_build_right_pane(main_split)`; handles sash initialisation only
+- `_build_panes()` — delegates to `_build_left_pane(main_split)` and `_build_right_pane(main_split)` (returns `top_row, right_outer`); handles sash initialisation only
 - `_run()` — splits symbol on commas; if multiple tickers calls `_fetch_comparison()`, otherwise `_fetch()`; clears output pane on every run
 - `_fetch()` — fetches stock + benchmark; updates window title and status bar; schedules UI updates via `self.after(0, ...)`; `finally` uses `self.after(0, ...)` for button re-enable (thread-safe)
 - `_fetch_comparison()` — iterates symbols, calls `compute_metrics()` per ticker, schedules `_show_comparison()` → opens `ComparisonWindow`
 - `_update_metrics()` — calls `compute_metrics()`, iterates `self._metric_vars` with `_METRIC_FORMATS[key](getattr(m, key))`; overrides beta to append bench name
-- `_plot()` — saves args to `self._last_plot`; reads `self.log_var` to set `ax_price` y-scale; passes `earnings_info` and `analyst_target` to `plot_price()`
-- `_toggle_log()` — re-calls `_plot(*self._last_plot)` if data exists; no re-fetch needed
+- `_plot()` — saves args to `self._last_plot`; reads `self.log_var`, `self.ma50_var`, `self.ma200_var` to set y-scale and pass `ma_windows` list to `plot_price()`
+- `_redraw_price()` — re-calls `_plot(*self._last_plot)` if data exists; bound to Log Scale, MA50, and MA200 checkboxes; no re-fetch needed
 - `_show_chart_menu()` / `_save_chart()` — right-click context menu on either canvas; saves PNG/PDF/SVG via `filedialog.asksaveasfilename()`
 - `_TextRedirector` — redirects `sys.stdout` to the ScrolledText output pane (thread-safe via `widget.after`)
 - `_Tooltip` — `wm_overrideredirect(True)` Toplevel on `<Enter>`/`<Leave>`; attached to all metric label widgets using `_METRIC_TIPS` dict
@@ -99,8 +102,11 @@ Controlled by a `View:` combobox at the top of the pane (`self.right_view_var`).
 | Rolling Beta | `plot_rolling_beta(window=63)` | LineCollection green/red by sign; β=1 reference line |
 | Rolling Sharpe | `plot_rolling_sharpe(window=63)` | LineCollection green/red by sign; Sharpe=1 reference line |
 | Monthly Heatmap | `plot_monthly_heatmap()` | `resample("ME")`, custom red/white/green colormap, cell annotations |
+| Volatility Cone | `plot_volatility_cone()` | IQR band (25–75th pctl), median dashed line, current RV dots, optional ATM IV hline |
 
-`autofmt_xdate(rotation=30)` is applied for Drawdown, Rolling Beta, and Rolling Sharpe (date x-axis). Monthly Heatmap has month-name x-axis — do not apply `autofmt_xdate` to it.
+`autofmt_xdate(rotation=30)` is applied for Drawdown, Rolling Beta, and Rolling Sharpe (date x-axis). Monthly Heatmap has month-name x-axis — do not apply `autofmt_xdate` to it. Volatility Cone uses discrete `WINDOWS = [10, 21, 63, 126, 252]` on the x-axis.
+
+`self._atm_iv` is stored alongside `self._right_pane_data` in `_plot_scatter()`; passed to `plot_volatility_cone()` via `_redraw_right_pane()`.
 
 ### Fundamentals bar
 
@@ -138,6 +144,15 @@ Compact horizontal pane (`stretch="never"`) between `top_row` and `chart_frame`.
 ### Multi-ticker comparison
 
 Enter comma-separated tickers (e.g. `AAPL, MSFT, GOOG`). `_fetch_comparison()` fetches each in sequence, calls `compute_metrics()`, then opens a `ComparisonWindow(tk.Toplevel)`. The window renders 14 rows (all `Metrics` fields + Trailing P/E + Dividend Yield) × N ticker columns using `_METRIC_FORMATS` for formatting and `hasattr(metrics, key)` to distinguish metric fields from fundamentals dict keys.
+
+### Moving averages
+
+`plot_price()` accepts `ma_windows=None` (list of ints, e.g. `[50, 200]`). MA50 = `COLOR_ORANGE`, MA200 = `COLOR_BLUE`. The legend at the end of `plot_price()` consolidates all labelled artists (analyst target line + MAs) via `ax.get_legend_handles_labels()`.
+
+Toolbar has three checkboxes all bound to `_redraw_price()`:
+- **Log Scale** (`self.log_var`, default False)
+- **MA50** (`self.ma50_var`, default True)
+- **MA200** (`self.ma200_var`, default True)
 
 ### Earnings overlay
 

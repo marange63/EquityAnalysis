@@ -11,7 +11,8 @@ from constants import BENCH_TICKERS, PERIODS, INTERVALS, COLOR_GREEN, COLOR_RED
 from data import fetch_stock_data, fetch_benchmark
 from metrics import compute_metrics
 from chart import (plot_price, plot_volume, plot_scatter, plot_drawdown,
-                   plot_rolling_beta, plot_rolling_sharpe, plot_monthly_heatmap)
+                   plot_rolling_beta, plot_rolling_sharpe, plot_monthly_heatmap,
+                   plot_volatility_cone)
 
 
 _METRIC_TIPS = {
@@ -94,7 +95,15 @@ class App(tk.Tk):
 
         self.log_var = tk.BooleanVar(value=False)
         tk.Checkbutton(top, text="Log Scale", variable=self.log_var,
-                       command=self._toggle_log).pack(side=tk.LEFT, padx=(16, 0))
+                       command=self._redraw_price).pack(side=tk.LEFT, padx=(16, 0))
+
+        self.ma50_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(top, text="MA50", variable=self.ma50_var,
+                       command=self._redraw_price).pack(side=tk.LEFT, padx=(8, 0))
+
+        self.ma200_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(top, text="MA200", variable=self.ma200_var,
+                       command=self._redraw_price).pack(side=tk.LEFT, padx=(4, 0))
 
     def _build_status_bar(self):
         self._status_var = tk.StringVar(value="Ready")
@@ -106,8 +115,8 @@ class App(tk.Tk):
         main_split = tk.PanedWindow(self, orient=tk.HORIZONTAL, sashrelief=tk.RAISED, sashwidth=6)
         main_split.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
 
-        top_row = self._build_left_pane(main_split)
-        self._build_right_pane(main_split)
+        self._build_left_pane(main_split)
+        top_row, right_outer = self._build_right_pane(main_split)
 
         _sash_set = False
 
@@ -119,6 +128,7 @@ class App(tk.Tk):
             self.update_idletasks()
             main_split.sash_place(0, int(self.winfo_width() * 0.65), 0)
             top_row.sash_place(0, top_row.winfo_width() // 2, 0)
+            right_outer.sash_place(0, 0, int(right_outer.winfo_height() * 0.45))
 
         self.bind("<Map>", _set_sash)
 
@@ -128,19 +138,6 @@ class App(tk.Tk):
 
         outer = tk.PanedWindow(left_frame, orient=tk.VERTICAL, sashrelief=tk.RAISED, sashwidth=6)
         outer.pack(fill=tk.BOTH, expand=True)
-
-        top_row = tk.PanedWindow(outer, orient=tk.HORIZONTAL, sashrelief=tk.RAISED, sashwidth=6)
-        outer.add(top_row, stretch="always")
-
-        self.output = scrolledtext.ScrolledText(
-            top_row, font=("Courier", 10), state=tk.DISABLED,
-            wrap=tk.NONE, padx=6, pady=6, height=10
-        )
-        top_row.add(self.output, stretch="always")
-
-        metrics_frame = tk.Frame(top_row, padx=14, pady=14, relief=tk.SUNKEN, bd=1)
-        top_row.add(metrics_frame, stretch="never", minsize=200)
-        self._build_metrics_pane(metrics_frame)
 
         fundamentals_frame = tk.Frame(outer, padx=14, pady=6, relief=tk.SUNKEN, bd=1)
         outer.add(fundamentals_frame, stretch="never")
@@ -158,11 +155,30 @@ class App(tk.Tk):
         self.canvas.get_tk_widget().bind(
             "<Button-3>", lambda e: self._show_chart_menu(e, self.figure))
 
-        return top_row
-
     def _build_right_pane(self, main_split):
-        scatter_frame = tk.Frame(main_split)
-        main_split.add(scatter_frame, stretch="always")
+        right_frame = tk.Frame(main_split)
+        main_split.add(right_frame, stretch="always")
+
+        right_outer = tk.PanedWindow(right_frame, orient=tk.VERTICAL, sashrelief=tk.RAISED, sashwidth=6)
+        right_outer.pack(fill=tk.BOTH, expand=True)
+
+        # Top section: output log | metrics
+        top_row = tk.PanedWindow(right_outer, orient=tk.HORIZONTAL, sashrelief=tk.RAISED, sashwidth=6)
+        right_outer.add(top_row, stretch="always")
+
+        self.output = scrolledtext.ScrolledText(
+            top_row, font=("Courier", 10), state=tk.DISABLED,
+            wrap=tk.NONE, padx=6, pady=6, height=10
+        )
+        top_row.add(self.output, stretch="always")
+
+        metrics_frame = tk.Frame(top_row, padx=14, pady=14, relief=tk.SUNKEN, bd=1)
+        top_row.add(metrics_frame, stretch="never", minsize=200)
+        self._build_metrics_pane(metrics_frame)
+
+        # Bottom section: scatter/view chart
+        scatter_frame = tk.Frame(right_outer)
+        right_outer.add(scatter_frame, stretch="always")
 
         ctrl_bar = tk.Frame(scatter_frame, padx=6, pady=4)
         ctrl_bar.pack(fill=tk.X)
@@ -171,17 +187,20 @@ class App(tk.Tk):
         right_cb = ttk.Combobox(ctrl_bar, textvariable=self.right_view_var, width=16,
                                 state="readonly",
                                 values=["Returns Scatter", "Drawdown", "Rolling Beta",
-                                        "Rolling Sharpe", "Monthly Heatmap"])
+                                        "Rolling Sharpe", "Monthly Heatmap", "Volatility Cone"])
         right_cb.pack(side=tk.LEFT, padx=(4, 0))
         right_cb.bind("<<ComboboxSelected>>", lambda _: self._redraw_right_pane())
 
         self._right_pane_data   = None
+        self._atm_iv            = None
         self.scatter_fig        = Figure(tight_layout=True)
         self.ax_scatter         = self.scatter_fig.add_subplot(111)
         self.scatter_canvas     = FigureCanvasTkAgg(self.scatter_fig, master=scatter_frame)
         self.scatter_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         self.scatter_canvas.get_tk_widget().bind(
             "<Button-3>", lambda e: self._show_chart_menu(e, self.scatter_fig))
+
+        return top_row, right_outer
 
     def _build_metrics_pane(self, frame):
         tk.Label(frame, text="Return Metrics", font=("Helvetica", 11, "bold"),
@@ -314,7 +333,8 @@ class App(tk.Tk):
                 }
                 self.after(0, self._plot, hist, symbol, period, earnings_info, analyst_target)
                 self.after(0, self._update_metrics, hist, bench_hist, self.bench_var.get())
-                self.after(0, self._plot_scatter, hist, bench_hist, symbol, self.bench_var.get())
+                atm_iv = fundamentals.get("atm_iv")
+                self.after(0, self._plot_scatter, hist, bench_hist, symbol, self.bench_var.get(), atm_iv)
                 self.after(0, self._update_fundamentals, fundamentals)
         except Exception as e:
             self.after(0, self._status_var.set, f"Error: {e}")
@@ -343,8 +363,9 @@ class App(tk.Tk):
     def _show_comparison(self, results, bench_name):
         ComparisonWindow(self, results, bench_name)
 
-    def _plot_scatter(self, hist, bench_hist, symbol, bench_name):
+    def _plot_scatter(self, hist, bench_hist, symbol, bench_name, atm_iv=None):
         self._right_pane_data = (hist, bench_hist, symbol, bench_name)
+        self._atm_iv = atm_iv
         self._redraw_right_pane()
 
     def _redraw_right_pane(self):
@@ -366,19 +387,22 @@ class App(tk.Tk):
             self.scatter_fig.autofmt_xdate(rotation=30, ha="right")
         elif view == "Monthly Heatmap":
             plot_monthly_heatmap(self.ax_scatter, hist, symbol)
+        elif view == "Volatility Cone":
+            plot_volatility_cone(self.ax_scatter, hist, symbol, self._atm_iv)
         self.scatter_fig.tight_layout()
         self.scatter_canvas.draw()
 
-    def _toggle_log(self):
+    def _redraw_price(self):
         if hasattr(self, "_last_plot"):
             self._plot(*self._last_plot)
 
     def _plot(self, hist, symbol, period, earnings_info=None, analyst_target=None):
         self._last_plot = (hist, symbol, period, earnings_info, analyst_target)
+        ma_windows = [w for w, v in ((50, self.ma50_var), (200, self.ma200_var)) if v.get()]
         self.ax_price.cla()
         self.ax_vol.cla()
         plot_price(self.ax_price, hist, symbol, period, self.log_var.get(),
-                   earnings_info, analyst_target)
+                   earnings_info, analyst_target, ma_windows or None)
         plot_volume(self.ax_vol, hist, self.figure)
         self.canvas.draw()
 
