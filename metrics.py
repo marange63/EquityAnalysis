@@ -13,6 +13,10 @@ def compute_metrics(hist, bench_hist):
     rolling_max    = close.cummax()
     max_drawdown   = ((close - rolling_max) / rolling_max).min()
 
+    downside       = returns[returns < 0]
+    sortino        = (returns.mean() * 252) / (downside.std() * np.sqrt(252))
+    calmar         = ann_cum_return / abs(max_drawdown) if max_drawdown != 0 else np.nan
+
     bench_returns = bench_hist["Close"].pct_change().dropna()
     aligned       = returns.align(bench_returns, join="inner")
     cov           = np.cov(aligned[0], aligned[1])
@@ -20,4 +24,12 @@ def compute_metrics(hist, bench_hist):
     corr          = np.corrcoef(aligned[0], aligned[1])[0, 1]
     r_squared     = corr ** 2
 
-    return ann_vol, cum_return, ann_cum_return, sharpe, max_drawdown, beta, corr, r_squared
+    up_mask        = aligned[1] > 0
+    down_mask      = aligned[1] < 0
+    up_bench_mean  = aligned[1][up_mask].mean()
+    down_bench_mean = aligned[1][down_mask].mean()
+    up_capture     = aligned[0][up_mask].mean()  / up_bench_mean   if up_bench_mean   != 0 else np.nan
+    down_capture   = aligned[0][down_mask].mean() / down_bench_mean if down_bench_mean != 0 else np.nan
+
+    return (ann_vol, cum_return, ann_cum_return, sharpe, sortino, calmar,
+            max_drawdown, beta, corr, r_squared, up_capture, down_capture)

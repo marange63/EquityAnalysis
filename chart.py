@@ -93,6 +93,29 @@ def plot_rolling_beta(ax, hist, bench_hist, symbol, bench_name, window=21):
     ax.grid(True, linestyle="--", alpha=0.4)
 
 
+def plot_monthly_heatmap(ax, hist, symbol):
+    MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    monthly_ret = hist["Close"].resample("ME").last().pct_change().dropna()
+    years = sorted(monthly_ret.index.year.unique())
+    data = np.full((len(years), 12), np.nan)
+    for dt, val in monthly_ret.items():
+        data[years.index(dt.year), dt.month - 1] = val
+
+    vmax = np.nanmax(np.abs(data))
+    ax.imshow(data, cmap="RdYlGn", aspect="auto", vmin=-vmax, vmax=vmax)
+    ax.set_xticks(range(12))
+    ax.set_xticklabels(MONTH_LABELS, fontsize=8)
+    ax.set_yticks(range(len(years)))
+    ax.set_yticklabels(years, fontsize=8)
+    for i in range(len(years)):
+        for j in range(12):
+            val = data[i, j]
+            if not np.isnan(val):
+                ax.text(j, i, f"{val:.1%}", ha="center", va="center", fontsize=7)
+    ax.set_title(f"{symbol} — Monthly Returns")
+
+
 def plot_volume(ax, hist, figure):
     dates = _get_dates(hist)
 

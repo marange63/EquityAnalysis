@@ -2,6 +2,7 @@ import sys
 import tkinter as tk
 from tkinter import scrolledtext, ttk
 import threading
+import numpy as np
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
@@ -9,7 +10,7 @@ from matplotlib.figure import Figure
 from constants import BENCH_TICKERS, PERIODS, INTERVALS
 from data import fetch_stock_data, fetch_benchmark
 from metrics import compute_metrics
-from chart import plot_price, plot_volume, plot_scatter, plot_drawdown, plot_rolling_beta
+from chart import plot_price, plot_volume, plot_scatter, plot_drawdown, plot_rolling_beta, plot_monthly_heatmap
 
 
 class App(tk.Tk):
@@ -113,7 +114,7 @@ class App(tk.Tk):
         self.right_view_var = tk.StringVar(value="Returns Scatter")
         right_cb = ttk.Combobox(ctrl_bar, textvariable=self.right_view_var, width=16,
                                 state="readonly",
-                                values=["Returns Scatter", "Drawdown", "Rolling Beta"])
+                                values=["Returns Scatter", "Drawdown", "Rolling Beta", "Monthly Heatmap"])
         right_cb.pack(side=tk.LEFT, padx=(4, 0))
         right_cb.bind("<<ComboboxSelected>>", lambda _: self._redraw_right_pane())
 
@@ -148,12 +149,16 @@ class App(tk.Tk):
             ("cum_return",     "Cumulative Return",        None),
             ("ann_cum_return", "Annualized Return (CAGR)", None),
             ("sharpe",         "Sharpe Ratio",             None),
+            ("sortino",        "Sortino Ratio",            None),
+            ("calmar",         "Calmar Ratio",             None),
             ("max_drawdown",   "Max Drawdown",             "red"),
         ]
         bench_rows = [
-            ("beta",      "Beta",          None),
-            ("corr",      "Correlation",   None),
-            ("r_squared", "R-Squared",     None),
+            ("beta",         "Beta",           None),
+            ("corr",         "Correlation",    None),
+            ("r_squared",    "R-Squared",      None),
+            ("up_capture",   "Up Capture",     None),
+            ("down_capture", "Down Capture",   None),
         ]
 
         def _add_rows(rows, start):
@@ -244,6 +249,8 @@ class App(tk.Tk):
         elif view == "Rolling Beta":
             plot_rolling_beta(self.ax_scatter, hist, bench_hist, symbol, bench_name)
             self.scatter_fig.autofmt_xdate(rotation=30, ha="right")
+        elif view == "Monthly Heatmap":
+            plot_monthly_heatmap(self.ax_scatter, hist, symbol)
         self.scatter_fig.tight_layout()
         self.scatter_canvas.draw()
 
@@ -260,16 +267,21 @@ class App(tk.Tk):
         self.canvas.draw()
 
     def _update_metrics(self, hist, bench_hist, bench_name):
-        ann_vol, cum_return, ann_cum_return, sharpe, max_drawdown, beta, corr, r_squared = \
+        ann_vol, cum_return, ann_cum_return, sharpe, sortino, calmar, \
+            max_drawdown, beta, corr, r_squared, up_capture, down_capture = \
             compute_metrics(hist, bench_hist)
         self._metric_vars["ann_vol"].set(f"{ann_vol:.2%}")
         self._metric_vars["cum_return"].set(f"{cum_return:+.2%}")
         self._metric_vars["ann_cum_return"].set(f"{ann_cum_return:+.2%}")
         self._metric_vars["sharpe"].set(f"{sharpe:.2f}")
+        self._metric_vars["sortino"].set(f"{sortino:.2f}")
+        self._metric_vars["calmar"].set(f"{calmar:.2f}" if not np.isnan(calmar) else "N/A")
         self._metric_vars["max_drawdown"].set(f"{max_drawdown:.2%}")
         self._metric_vars["beta"].set(f"{beta:.2f}  vs {bench_name}")
         self._metric_vars["corr"].set(f"{corr:.4f}")
         self._metric_vars["r_squared"].set(f"{r_squared:.4f}")
+        self._metric_vars["up_capture"].set(f"{up_capture:.1%}" if not np.isnan(up_capture) else "N/A")
+        self._metric_vars["down_capture"].set(f"{down_capture:.1%}" if not np.isnan(down_capture) else "N/A")
 
     def _update_fundamentals(self, fundamentals):
         pe_t = fundamentals.get("trailingPE")
