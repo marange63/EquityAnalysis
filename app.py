@@ -1,16 +1,32 @@
 import sys
 import tkinter as tk
-from tkinter import scrolledtext, ttk
+from tkinter import scrolledtext, ttk, filedialog
 import threading
 import numpy as np
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
-from constants import BENCH_TICKERS, PERIODS, INTERVALS
+from constants import BENCH_TICKERS, PERIODS, INTERVALS, COLOR_GREEN, COLOR_RED
 from data import fetch_stock_data, fetch_benchmark
 from metrics import compute_metrics
 from chart import plot_price, plot_volume, plot_scatter, plot_drawdown, plot_rolling_beta, plot_rolling_sharpe, plot_monthly_heatmap
+
+
+_METRIC_TIPS = {
+    "ann_vol":        "Annualized Volatility\nstd(daily r) × √252\nHigher = more volatile",
+    "cum_return":     "Cumulative Return\nlast / first − 1",
+    "ann_cum_return": "CAGR\n(1 + cum)^(252/n) − 1",
+    "sharpe":         "Sharpe Ratio\nmean(r) / std(r) × √252  (rf = 0)\n>1 good  >2 excellent  <0 poor",
+    "sortino":        "Sortino Ratio\nmean(r) × 252 / downside_std\nLike Sharpe — only penalises losses",
+    "calmar":         "Calmar Ratio\nCAGR / |Max Drawdown|\nReturn per unit of peak-to-trough risk",
+    "max_drawdown":   "Max Drawdown\nmin((price − peak) / peak)\nWorst peak-to-trough decline",
+    "beta":           "Beta\nCov(stock, bench) / Var(bench)\n>1 amplifies market moves  1 = market",
+    "corr":           "Pearson Correlation of daily returns\n1 = perfect co-movement with benchmark",
+    "r_squared":      "R-Squared  (corr²)\n% of stock variance explained by benchmark",
+    "up_capture":     "Up Capture\nStock mean return on bench-up days / bench mean\n>100% = outperforms in rallies",
+    "down_capture":   "Down Capture\nStock mean return on bench-down days / bench mean\n<100% = loses less in sell-offs",
+}
 
 
 class App(tk.Tk):
@@ -21,6 +37,7 @@ class App(tk.Tk):
         self.minsize(800, 650)
 
         self._build_toolbar()
+        self._build_status_bar()   # pack at BOTTOM before panes fill the rest
         self._build_panes()
 
         sys.stdout = _TextRedirector(self.output)
@@ -103,6 +120,8 @@ class App(tk.Tk):
 
         self.canvas = FigureCanvasTkAgg(self.figure, master=chart_frame)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        self.canvas.get_tk_widget().bind(
+            "<Button-3>", lambda e: self._show_chart_menu(e, self.figure))
 
         # --- Right side: chart pane ---
         scatter_frame = tk.Frame(main_split)
@@ -124,6 +143,8 @@ class App(tk.Tk):
         self.ax_scatter  = self.scatter_fig.add_subplot(111)
         self.scatter_canvas = FigureCanvasTkAgg(self.scatter_fig, master=scatter_frame)
         self.scatter_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        self.scatter_canvas.get_tk_widget().bind(
+            "<Button-3>", lambda e: self._show_chart_menu(e, self.scatter_fig))
 
         # Set initial sash positions once window is rendered
         _sash_set = False
@@ -139,11 +160,18 @@ class App(tk.Tk):
 
         self.bind("<Map>", _set_sash)
 
+    def _build_status_bar(self):
+        self._status_var = tk.StringVar(value="Ready")
+        tk.Label(self, textvariable=self._status_var, anchor=tk.W, relief=tk.SUNKEN,
+                 bd=1, padx=6, font=("Helvetica", 9), fg="#555555"
+                 ).pack(side=tk.BOTTOM, fill=tk.X)
+
     def _build_metrics_pane(self, frame):
         tk.Label(frame, text="Return Metrics", font=("Helvetica", 11, "bold"),
                  anchor=tk.W).grid(row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 10))
 
-        self._metric_vars = {}
+        self._metric_vars  = {}
+        self._metric_labels = {}
 
         return_rows = [
             ("ann_vol",        "Annualized Volatility",    None),
@@ -164,13 +192,16 @@ class App(tk.Tk):
 
         def _add_rows(rows, start):
             for i, (key, label, fg) in enumerate(rows, start=start):
-                tk.Label(frame, text=label, anchor=tk.W, fg="#555555").grid(
-                    row=i, column=0, sticky=tk.W, pady=1, padx=(0, 16))
+                lbl_text = tk.Label(frame, text=label, anchor=tk.W, fg="#555555")
+                lbl_text.grid(row=i, column=0, sticky=tk.W, pady=1, padx=(0, 16))
+                if key in _METRIC_TIPS:
+                    _Tooltip(lbl_text, _METRIC_TIPS[key])
                 var = tk.StringVar(value="—")
                 self._metric_vars[key] = var
-                tk.Label(frame, textvariable=var, anchor=tk.E,
-                         font=("Courier", 11, "bold"), fg=fg or "black").grid(
-                    row=i, column=1, sticky=tk.E)
+                lbl_val = tk.Label(frame, textvariable=var, anchor=tk.E,
+                                   font=("Courier", 11, "bold"), fg=fg or "black")
+                lbl_val.grid(row=i, column=1, sticky=tk.E)
+                self._metric_labels[key] = lbl_val
             return start + len(rows)
 
         next_row = _add_rows(return_rows, start=1)
@@ -217,6 +248,8 @@ class App(tk.Tk):
         if not symbols:
             return
         self.run_btn.config(state=tk.DISABLED)
+        self.title("Equity Analysis")
+        self._status_var.set(f"Fetching {', '.join(symbols)}…")
         self.output.config(state=tk.NORMAL)
         self.output.delete("1.0", tk.END)
         self.output.config(state=tk.DISABLED)
@@ -238,12 +271,17 @@ class App(tk.Tk):
             hist, fundamentals = fetch_stock_data(symbol, period, interval)
             bench_hist         = fetch_benchmark(bench, period, interval)
             if hist is not None:
+                price = hist["Close"].iloc[-1]
+                self.after(0, lambda: self.title(f"Equity Analysis — {symbol}  ${price:.2f}"))
+                self.after(0, self._status_var.set,
+                           f"{symbol}  ·  ${price:.2f}  ·  {len(hist):,} bars")
                 ed = fundamentals.get("earnings_dates", [])
                 self.after(0, self._plot, hist, symbol, period, ed)
                 self.after(0, self._update_metrics, hist, bench_hist, self.bench_var.get())
                 self.after(0, self._plot_scatter, hist, bench_hist, symbol, self.bench_var.get())
                 self.after(0, self._update_fundamentals, fundamentals)
         except Exception as e:
+            self.after(0, self._status_var.set, f"Error: {e}")
             print(f"\nError: {e}")
         finally:
             self.run_btn.config(state=tk.NORMAL)
@@ -258,7 +296,10 @@ class App(tk.Tk):
                     results.append((sym, compute_metrics(hist, bench_hist), fundamentals))
             if results:
                 self.after(0, self._show_comparison, results, bench_name)
+                self.after(0, self._status_var.set,
+                           f"Comparison: {', '.join(r[0] for r in results)}")
         except Exception as e:
+            self.after(0, self._status_var.set, f"Error: {e}")
             print(f"\nError: {e}")
         finally:
             self.after(0, lambda: self.run_btn.config(state=tk.NORMAL))
@@ -369,6 +410,25 @@ class App(tk.Tk):
         self._metric_vars["up_capture"].set(f"{up_capture:.1%}" if not np.isnan(up_capture) else "N/A")
         self._metric_vars["down_capture"].set(f"{down_capture:.1%}" if not np.isnan(down_capture) else "N/A")
 
+        # Dynamic value coloring
+        self._metric_labels["cum_return"].config(
+            fg=COLOR_GREEN if cum_return > 0 else COLOR_RED)
+        self._metric_labels["ann_cum_return"].config(
+            fg=COLOR_GREEN if ann_cum_return > 0 else COLOR_RED)
+        self._metric_labels["sharpe"].config(
+            fg=COLOR_GREEN if sharpe > 1 else (COLOR_RED if sharpe < 0 else "black"))
+        self._metric_labels["sortino"].config(
+            fg=COLOR_GREEN if sortino > 1 else (COLOR_RED if sortino < 0 else "black"))
+        if not np.isnan(calmar):
+            self._metric_labels["calmar"].config(
+                fg=COLOR_GREEN if calmar > 1 else (COLOR_RED if calmar < 0 else "black"))
+        if not np.isnan(up_capture):
+            self._metric_labels["up_capture"].config(
+                fg=COLOR_GREEN if up_capture > 1 else COLOR_RED)
+        if not np.isnan(down_capture):
+            self._metric_labels["down_capture"].config(
+                fg=COLOR_GREEN if down_capture < 1 else COLOR_RED)
+
     def _update_fundamentals(self, fundamentals):
         pe_t = fundamentals.get("trailingPE")
         pe_f = fundamentals.get("forwardPE")
@@ -389,6 +449,21 @@ class App(tk.Tk):
             f"{cur / ph - 1:+.1%}" if cur and ph else "N/A")
 
 
+    def _show_chart_menu(self, event, figure):
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="Save as PNG…", command=lambda: self._save_chart(figure))
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _save_chart(self, figure):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG image", "*.png"), ("PDF document", "*.pdf"), ("SVG image", "*.svg")],
+            title="Save chart",
+        )
+        if path:
+            figure.savefig(path, dpi=150, bbox_inches="tight")
+
+
 class _TextRedirector:
     def __init__(self, widget: scrolledtext.ScrolledText):
         self.widget = widget
@@ -404,3 +479,27 @@ class _TextRedirector:
 
     def flush(self):
         pass
+
+
+class _Tooltip:
+    def __init__(self, widget, text):
+        self._widget = widget
+        self._text   = text
+        self._tip    = None
+        widget.bind("<Enter>", self._show)
+        widget.bind("<Leave>", self._hide)
+
+    def _show(self, _event=None):
+        x = self._widget.winfo_rootx() + 20
+        y = self._widget.winfo_rooty() + self._widget.winfo_height() + 2
+        self._tip = tk.Toplevel(self._widget)
+        self._tip.wm_overrideredirect(True)
+        self._tip.wm_geometry(f"+{x}+{y}")
+        tk.Label(self._tip, text=self._text, justify=tk.LEFT, background="#ffffcc",
+                 relief=tk.SOLID, borderwidth=1, font=("Helvetica", 9),
+                 padx=5, pady=3, wraplength=300).pack()
+
+    def _hide(self, _event=None):
+        if self._tip:
+            self._tip.destroy()
+            self._tip = None
