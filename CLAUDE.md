@@ -59,7 +59,7 @@ No CLI arguments. The app launches a tkinter window directly.
 - `_fetch()` — fetches stock + benchmark; updates window title and status bar; schedules UI updates via `self.after(0, ...)`; `finally` uses `self.after(0, ...)` for button re-enable (thread-safe)
 - `_fetch_comparison()` — iterates symbols, calls `compute_metrics()` per ticker, schedules `_show_comparison()` → opens `ComparisonWindow`
 - `_update_metrics()` — calls `compute_metrics()`, iterates `self._metric_vars` with `_METRIC_FORMATS[key](getattr(m, key))`; overrides beta to append bench name
-- `_plot()` — saves args to `self._last_plot`; reads `self.log_var` to set `ax_price` y-scale; passes `earnings_dates` to `plot_price()`
+- `_plot()` — saves args to `self._last_plot`; reads `self.log_var` to set `ax_price` y-scale; passes `earnings_info` and `analyst_target` to `plot_price()`
 - `_toggle_log()` — re-calls `_plot(*self._last_plot)` if data exists; no re-fetch needed
 - `_show_chart_menu()` / `_save_chart()` — right-click context menu on either canvas; saves PNG/PDF/SVG via `filedialog.asksaveasfilename()`
 - `_TextRedirector` — redirects `sys.stdout` to the ScrolledText output pane (thread-safe via `widget.after`)
@@ -104,12 +104,22 @@ Controlled by a `View:` combobox at the top of the pane (`self.right_view_var`).
 
 ### Fundamentals bar
 
-Compact horizontal pane (`stretch="never"`) between `top_row` and `chart_frame`. Two rows, three columns each:
+Compact horizontal pane (`stretch="never"`) between `top_row` and `chart_frame`. Four rows, three columns each — built by iterating `all_rows` list in `_build_fundamentals_pane()`:
 
 - **Row 0**: Trailing P/E · Forward P/E · Dividend Yield
 - **Row 1**: % from 52w High · % from 52w Low · % from Period High
+- **Row 2**: Analyst Target ($) · Upside to Target (%) · Consensus (e.g. "Buy")
+- **Row 3**: ATM IV (%) · IV/HV ratio (×) · P/C OI ratio
 
-`fetch_stock_data()` returns `(hist, fundamentals)` — a tuple. On empty data returns `(None, {})`. Fundamentals dict keys: `trailingPE`, `forwardPE`, `dividendYield`, `currentPrice`, `fiftyTwoWeekHigh`, `fiftyTwoWeekLow`, `periodHigh`, `earnings_dates`.
+`fetch_stock_data()` returns `(hist, fundamentals)` — a tuple. On empty data returns `(None, {})`. Full fundamentals dict keys:
+
+| Group | Keys |
+|-------|------|
+| Valuation | `trailingPE`, `forwardPE`, `dividendYield` |
+| Price context | `currentPrice`, `fiftyTwoWeekHigh`, `fiftyTwoWeekLow`, `periodHigh` |
+| Earnings | `earnings_info` — `{date: {"surprise_pct": float\|None}}` |
+| Analyst | `targetMeanPrice`, `targetHighPrice`, `targetLowPrice`, `numberOfAnalystOpinions`, `recommendationKey` |
+| Options | `atm_iv`, `iv_hv_ratio`, `pc_oi_ratio`, `nearest_expiry` |
 
 **yfinance quirk (v1.2.0):** `dividendYield` is returned already as a percentage value (e.g. `0.52` means 0.52%), so format with `f"{dy:.2f}%"` — do NOT use `:.2%` which would multiply by 100 again.
 
@@ -131,7 +141,11 @@ Enter comma-separated tickers (e.g. `AAPL, MSFT, GOOG`). `_fetch_comparison()` f
 
 ### Earnings overlay
 
-`plot_price()` accepts `earnings_dates` (list of `datetime.date`). Draws a dotted `axvline` at each date and annotates the next-day % move using `ax.get_xaxis_transform()` for mixed axis/data coordinates.
+`plot_price()` accepts `earnings_info` (`dict[date, {"surprise_pct": float|None}]`) and `analyst_target` (`{"mean", "low", "high"}`).
+
+- **Earnings lines**: dotted `axvline` colored green (EPS beat), red (miss), or dark gray (surprise unknown/future). Next-day price move annotated via `ax.get_xaxis_transform()`.
+- **Analyst target**: dashed blue `axhline` at mean price target; shaded `axhspan` between low and high targets (alpha=0.06). Legend entry shows `"Target $xxx.xx"`.
+- `np.searchsorted` on `.date()` array matches earnings dates to hist index positions.
 
 ### Launch script
 
