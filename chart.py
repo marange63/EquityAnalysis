@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.ticker as mticker
 from matplotlib.collections import LineCollection
+from matplotlib.colors import LinearSegmentedColormap
 
 from constants import (
     COLOR_GREEN, COLOR_RED, COLOR_BLUE, COLOR_ORANGE, COLOR_GRAY, COLOR_DARK
@@ -102,8 +103,9 @@ def plot_monthly_heatmap(ax, hist, symbol):
     for dt, val in monthly_ret.items():
         data[years.index(dt.year), dt.month - 1] = val
 
+    cmap = LinearSegmentedColormap.from_list("rg", [COLOR_RED, "white", COLOR_GREEN])
     vmax = np.nanmax(np.abs(data))
-    ax.imshow(data, cmap="RdYlGn", aspect="auto", vmin=-vmax, vmax=vmax)
+    ax.imshow(data, cmap=cmap, aspect="auto", vmin=-vmax, vmax=vmax)
     ax.set_xticks(range(12))
     ax.set_xticklabels(MONTH_LABELS, fontsize=8)
     ax.set_yticks(range(len(years)))
