@@ -27,7 +27,7 @@ No CLI arguments. The app launches a tkinter window directly.
 |------|---------------|
 | `main.py` | Entry point only (4 lines) |
 | `app.py` | `App(tk.Tk)` class + `_TextRedirector` |
-| `chart.py` | `plot_price()`, `plot_volume()`, `plot_scatter()`, `plot_drawdown()`, `plot_rolling_beta()`, `plot_monthly_heatmap()` |
+| `chart.py` | `plot_price()`, `plot_volume()`, `plot_scatter()`, `plot_drawdown()`, `plot_rolling_beta()`, `plot_rolling_sharpe()`, `plot_monthly_heatmap()` |
 | `metrics.py` | `compute_metrics()` — pure analytics |
 | `data.py` | `fetch_stock_data()`, `fetch_benchmark()` — yfinance calls |
 | `constants.py` | `BENCH_TICKERS`, `PERIODS`, `INTERVALS`, chart color constants |
@@ -40,24 +40,28 @@ No CLI arguments. The app launches a tkinter window directly.
 ┌─ top bar ─────────────────────────────────────────────────────────┐
 │ Symbol | Period | Interval | Benchmark | Run | Log Scale          │
 ├─ main_split (horizontal PanedWindow, 65% / 35%) ──────────────────┤
-│  ┌─ left: outer (vertical PanedWindow) ───┐  ┌─ right pane ────┐  │
-│  │ top_row: output  │ metrics             │  │ View: [dropdown]│  │
-│  │ fundamentals bar (P/E, dividend yield) │  │ • Returns Scatter│  │
-│  │ chart: ax_price (price line)           │  │ • Drawdown       │  │
-│  │        ax_vol   (volume bars)          │  │ • Rolling Beta   │  │
-│  └────────────────────────────────────────┘  │ • Monthly Heatmap│  │
-│                                              └──────────────────┘  │
-│  └────────────────────────────────────────┘                       │
+│  ┌─ left: outer (vertical PanedWindow) ───┐  ┌─ right pane ─────┐ │
+│  │ top_row: output  │ metrics             │  │ View: [dropdown] │ │
+│  │ fundamentals bar (valuations + 52w)    │  │ • Returns Scatter│ │
+│  │ chart: ax_price (price line)           │  │ • Drawdown       │ │
+│  │        ax_vol   (volume bars)          │  │ • Rolling Beta   │ │
+│  └────────────────────────────────────────┘  │ • Rolling Sharpe │ │
+│                                              │ • Monthly Heatmap│ │
+│                                              └──────────────────┘ │
+├─ status bar (BOTTOM) ─────────────────────────────────────────────┤
 └───────────────────────────────────────────────────────────────────┘
 ```
 
 **Metrics pane** default width = half the window width, set via `sash_place()` on `<Map>` with a `nonlocal` one-shot flag. Do not use `unbind(seq, funcid)` on Python 3.13 — throws `TclError` because `<Map>` fires once per child widget.
 
-- `_run()` — clears output, reads controls, spawns a daemon thread calling `_fetch()`
-- `_fetch()` — unpacks `hist, fundamentals = fetch_stock_data(...)`, fetches benchmark, then schedules `_plot()`, `_update_metrics()`, `_plot_scatter()`, and `_update_fundamentals()` via `self.after(0, ...)`
-- `_plot()` — saves args to `self._last_plot`; reads `self.log_var` to set `ax_price` y-scale
+- `_run()` — splits symbol on commas; if multiple tickers calls `_fetch_comparison()`, otherwise `_fetch()`; clears output pane on every run
+- `_fetch()` — fetches stock + benchmark; updates window title (`f"Equity Analysis — {symbol}  ${price:.2f}"`) and status bar; schedules `_plot()`, `_update_metrics()`, `_plot_scatter()`, `_update_fundamentals()` via `self.after(0, ...)`
+- `_fetch_comparison()` — iterates symbols, calls `compute_metrics()` per ticker, schedules `_show_comparison()` (Toplevel with `ttk.Treeview`)
+- `_plot()` — saves args to `self._last_plot`; reads `self.log_var` to set `ax_price` y-scale; passes `earnings_dates` to `plot_price()`
 - `_toggle_log()` — re-calls `_plot(*self._last_plot)` if data exists; no re-fetch needed
+- `_show_chart_menu()` / `_save_chart()` — right-click context menu on either canvas; saves PNG/PDF/SVG via `filedialog.asksaveasfilename()`
 - `_TextRedirector` — redirects `sys.stdout` to the ScrolledText output pane (thread-safe via `widget.after`)
+- `_Tooltip` — `wm_overrideredirect(True)` Toplevel on `<Enter>`/`<Leave>`; attached to all metric label widgets using `_METRIC_TIPS` dict
 
 ### Metrics panel
 
@@ -88,15 +92,43 @@ Controlled by a `View:` combobox at the top of the pane (`self.right_view_var`).
 |------|----------|-------|
 | Returns Scatter | `plot_scatter()` | OLS regression line, β label |
 | Drawdown | `plot_drawdown()` | filled area, y-axis as % |
-| Rolling Beta | `plot_rolling_beta()` | default window=21, β=1 reference line |
-| Monthly Heatmap | `plot_monthly_heatmap()` | `resample("ME")`, `RdYlGn` colormap, cell annotations |
+| Rolling Beta | `plot_rolling_beta(window=63)` | β=1 reference line |
+| Rolling Sharpe | `plot_rolling_sharpe(window=63)` | Sharpe=1 reference line |
+| Monthly Heatmap | `plot_monthly_heatmap()` | `resample("ME")`, custom red/white/green colormap, cell annotations |
 
-`autofmt_xdate(rotation=30)` is applied for Drawdown and Rolling Beta only (date x-axis). Monthly Heatmap has month-name x-axis — do not apply autofmt_xdate to it.
+`autofmt_xdate(rotation=30)` is applied for Drawdown, Rolling Beta, and Rolling Sharpe (date x-axis). Monthly Heatmap has month-name x-axis — do not apply `autofmt_xdate` to it.
 
 ### Fundamentals bar
 
-Compact horizontal pane (`stretch="never"`) between `top_row` and `chart_frame` in the `outer` vertical PanedWindow. Displays three label/value pairs side by side: **Trailing P/E**, **Forward P/E**, **Dividend Yield**.
+Compact horizontal pane (`stretch="never"`) between `top_row` and `chart_frame`. Two rows, three columns each:
 
-`fetch_stock_data()` now returns `(hist, fundamentals)` — a tuple. On empty data returns `(None, {})`. The `fundamentals` dict keys are `trailingPE`, `forwardPE`, `dividendYield` (from `stock.info`).
+- **Row 0**: Trailing P/E · Forward P/E · Dividend Yield
+- **Row 1**: % from 52w High · % from 52w Low · % from Period High
+
+`fetch_stock_data()` returns `(hist, fundamentals)` — a tuple. On empty data returns `(None, {})`. Fundamentals dict keys: `trailingPE`, `forwardPE`, `dividendYield`, `currentPrice`, `fiftyTwoWeekHigh`, `fiftyTwoWeekLow`, `periodHigh`, `earnings_dates`.
 
 **yfinance quirk (v1.2.0):** `dividendYield` is returned already as a percentage value (e.g. `0.52` means 0.52%), so format with `f"{dy:.2f}%"` — do NOT use `:.2%` which would multiply by 100 again.
+
+### Dynamic metric coloring
+
+`_update_metrics()` calls `.config(fg=...)` on `self._metric_labels[key]` after setting values. Rules:
+- `cum_return`, `ann_cum_return`: green if > 0, red if ≤ 0
+- `sharpe`, `sortino`, `calmar`: green if > 1, red if < 0, black otherwise
+- `up_capture`: green if > 1, red otherwise
+- `down_capture`: green if < 1 (loses less than market), red otherwise
+
+### Status bar & window title
+
+`_build_status_bar()` packs a sunken `tk.Label` at `BOTTOM` **before** `_build_panes()` to ensure correct layout. Title updates to `f"Equity Analysis — {symbol}  ${price:.2f}"` after a successful single-ticker fetch.
+
+### Multi-ticker comparison
+
+Enter comma-separated tickers (e.g. `AAPL, MSFT, GOOG`). `_fetch_comparison()` fetches each in sequence, calls `compute_metrics()`, then opens a `tk.Toplevel` with a `ttk.Treeview` showing 14 rows (all metrics + Trailing P/E + Dividend Yield) × N ticker columns.
+
+### Earnings overlay
+
+`plot_price()` accepts `earnings_dates` (list of `datetime.date`). Draws a dotted `axvline` at each date and annotates the next-day % move using `ax.get_xaxis_transform()` for mixed axis/data coordinates.
+
+### Launch script
+
+`launch.bat` — double-click in Windows Explorer to activate the `Finance` conda environment and run `main.py`. Pauses on error.
