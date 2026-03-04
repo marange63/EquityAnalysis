@@ -233,7 +233,8 @@ class App(tk.Tk):
         frame.columnconfigure(1, weight=1)
 
     def _build_fundamentals_pane(self, frame):
-        self._fundamental_vars = {}
+        self._fundamental_vars   = {}
+        self._fundamental_labels = {}
         all_rows = [
             [
                 ("trailingPE",      "Trailing P/E"),
@@ -264,8 +265,9 @@ class App(tk.Tk):
                     row=row_idx, column=col * 2, sticky=tk.W, padx=padx, pady=pady)
                 var = tk.StringVar(value="—")
                 self._fundamental_vars[key] = var
-                tk.Label(frame, textvariable=var, font=("Courier", 11, "bold")).grid(
-                    row=row_idx, column=col * 2 + 1, sticky=tk.W, pady=pady)
+                lbl = tk.Label(frame, textvariable=var, font=("Courier", 11, "bold"))
+                lbl.grid(row=row_idx, column=col * 2 + 1, sticky=tk.W, pady=pady)
+                self._fundamental_labels[key] = lbl
 
     # ------------------------------------------------------------------
     # Event handlers
@@ -415,16 +417,19 @@ class App(tk.Tk):
         self._fundamental_vars["dividendYield"].set(f"{dy:.2f}%" if dy else "N/A")
 
         # Row 1: 52w proximity
-        cur = fundamentals.get("currentPrice")
-        h52 = fundamentals.get("fiftyTwoWeekHigh")
-        l52 = fundamentals.get("fiftyTwoWeekLow")
-        ph  = fundamentals.get("periodHigh")
-        self._fundamental_vars["from52wHigh"].set(
-            f"{cur / h52 - 1:+.1%}" if cur and h52 else "N/A")
-        self._fundamental_vars["from52wLow"].set(
-            f"{cur / l52 - 1:+.1%}" if cur and l52 else "N/A")
-        self._fundamental_vars["fromPeriodHigh"].set(
-            f"{cur / ph - 1:+.1%}" if cur and ph else "N/A")
+        cur     = fundamentals.get("currentPrice")
+        h52     = fundamentals.get("fiftyTwoWeekHigh")
+        l52     = fundamentals.get("fiftyTwoWeekLow")
+        ph      = fundamentals.get("periodHigh")
+        from_h  = cur / h52 - 1 if cur and h52 else None
+        from_l  = cur / l52 - 1 if cur and l52 else None
+        from_ph = cur / ph  - 1 if cur and ph  else None
+        self._fundamental_vars["from52wHigh"].set(f"{from_h:+.1%}"  if from_h  is not None else "N/A")
+        self._fundamental_vars["from52wLow"].set(f"{from_l:+.1%}"   if from_l  is not None else "N/A")
+        self._fundamental_vars["fromPeriodHigh"].set(f"{from_ph:+.1%}" if from_ph is not None else "N/A")
+        for key, val in (("from52wHigh", from_h), ("from52wLow", from_l), ("fromPeriodHigh", from_ph)):
+            self._fundamental_labels[key].config(
+                fg=COLOR_GREEN if val is not None and val >= 0 else (COLOR_RED if val is not None else "black"))
 
         # Row 2: Analyst targets
         target = fundamentals.get("targetMeanPrice")

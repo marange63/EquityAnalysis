@@ -111,7 +111,17 @@ def plot_rolling_beta(ax, hist, bench_hist, symbol, bench_name, window=63):
     s, b = stock_ret.align(bench_ret, join="inner")
     rolling_beta = (s.rolling(window).cov(b) / b.rolling(window).var()).dropna()
     dates = rolling_beta.index.tz_localize(None) if rolling_beta.index.tzinfo else rolling_beta.index
-    ax.plot(dates, rolling_beta.values, color=COLOR_BLUE, linewidth=1.2)
+
+    x = mdates.date2num(dates.to_pydatetime())
+    y = rolling_beta.values
+    pts  = np.array([x, y]).T.reshape(-1, 1, 2)
+    segs = np.concatenate([pts[:-1], pts[1:]], axis=1)
+    lc = LineCollection(segs, colors=[COLOR_GREEN if v >= 0 else COLOR_RED for v in y[1:]], linewidth=1.2)
+    ax.add_collection(lc)
+    ax.set_xlim(x[0], x[-1])
+    y_pad = max((y.max() - y.min()) * 0.05, 0.1)
+    ax.set_ylim(y.min() - y_pad, y.max() + y_pad)
+
     ax.axhline(1, color=COLOR_GRAY, linewidth=0.8, linestyle="--", label="β = 1")
     ax.axhline(0, color="#aaaaaa", linewidth=0.5, linestyle="--")
     ax.set_ylabel("Beta")
@@ -128,7 +138,17 @@ def plot_rolling_sharpe(ax, hist, symbol, window=63):
         returns.rolling(window).mean() / returns.rolling(window).std() * np.sqrt(252)
     ).dropna()
     dates = rolling_sharpe.index.tz_localize(None) if rolling_sharpe.index.tzinfo else rolling_sharpe.index
-    ax.plot(dates, rolling_sharpe.values, color=COLOR_BLUE, linewidth=1.2)
+
+    x = mdates.date2num(dates.to_pydatetime())
+    y = rolling_sharpe.values
+    pts  = np.array([x, y]).T.reshape(-1, 1, 2)
+    segs = np.concatenate([pts[:-1], pts[1:]], axis=1)
+    lc = LineCollection(segs, colors=[COLOR_GREEN if v >= 0 else COLOR_RED for v in y[1:]], linewidth=1.2)
+    ax.add_collection(lc)
+    ax.set_xlim(x[0], x[-1])
+    y_pad = max((y.max() - y.min()) * 0.05, 0.1)
+    ax.set_ylim(y.min() - y_pad, y.max() + y_pad)
+
     ax.axhline(1, color=COLOR_GRAY, linewidth=0.8, linestyle="--", label="Sharpe = 1")
     ax.axhline(0, color="#aaaaaa", linewidth=0.5, linestyle="--")
     ax.set_ylabel("Sharpe Ratio")
