@@ -234,17 +234,29 @@ class App(tk.Tk):
 
     def _build_fundamentals_pane(self, frame):
         self._fundamental_vars = {}
-        val_items = [
-            ("trailingPE",    "Trailing P/E"),
-            ("forwardPE",     "Forward P/E"),
-            ("dividendYield", "Dividend Yield"),
+        all_rows = [
+            [
+                ("trailingPE",      "Trailing P/E"),
+                ("forwardPE",       "Forward P/E"),
+                ("dividendYield",   "Dividend Yield"),
+            ],
+            [
+                ("from52wHigh",     "% from 52w High"),
+                ("from52wLow",      "% from 52w Low"),
+                ("fromPeriodHigh",  "% from Period High"),
+            ],
+            [
+                ("analystTarget",   "Analyst Target"),
+                ("analystUpside",   "Upside to Target"),
+                ("analystConsensus","Consensus"),
+            ],
+            [
+                ("atm_iv",          "ATM IV"),
+                ("iv_hv_ratio",     "IV / HV"),
+                ("pc_oi_ratio",     "P/C OI"),
+            ],
         ]
-        prox_items = [
-            ("from52wHigh",    "% from 52w High"),
-            ("from52wLow",     "% from 52w Low"),
-            ("fromPeriodHigh", "% from Period High"),
-        ]
-        for row_idx, items in enumerate((val_items, prox_items)):
+        for row_idx, items in enumerate(all_rows):
             pady = (0, 0) if row_idx == 0 else (4, 0)
             for col, (key, label) in enumerate(items):
                 padx = (0, 4) if col == 0 else (28, 4)
@@ -292,8 +304,13 @@ class App(tk.Tk):
                 self.after(0, lambda: self.title(f"Equity Analysis — {symbol}  ${price:.2f}"))
                 self.after(0, self._status_var.set,
                            f"{symbol}  ·  ${price:.2f}  ·  {len(hist):,} bars")
-                ed = fundamentals.get("earnings_dates", [])
-                self.after(0, self._plot, hist, symbol, period, ed)
+                earnings_info  = fundamentals.get("earnings_info", {})
+                analyst_target = {
+                    "mean": fundamentals.get("targetMeanPrice"),
+                    "low":  fundamentals.get("targetLowPrice"),
+                    "high": fundamentals.get("targetHighPrice"),
+                }
+                self.after(0, self._plot, hist, symbol, period, earnings_info, analyst_target)
                 self.after(0, self._update_metrics, hist, bench_hist, self.bench_var.get())
                 self.after(0, self._plot_scatter, hist, bench_hist, symbol, self.bench_var.get())
                 self.after(0, self._update_fundamentals, fundamentals)
@@ -354,11 +371,12 @@ class App(tk.Tk):
         if hasattr(self, "_last_plot"):
             self._plot(*self._last_plot)
 
-    def _plot(self, hist, symbol, period, earnings_dates=None):
-        self._last_plot = (hist, symbol, period, earnings_dates)
+    def _plot(self, hist, symbol, period, earnings_info=None, analyst_target=None):
+        self._last_plot = (hist, symbol, period, earnings_info, analyst_target)
         self.ax_price.cla()
         self.ax_vol.cla()
-        plot_price(self.ax_price, hist, symbol, period, self.log_var.get(), earnings_dates)
+        plot_price(self.ax_price, hist, symbol, period, self.log_var.get(),
+                   earnings_info, analyst_target)
         plot_volume(self.ax_vol, hist, self.figure)
         self.canvas.draw()
 
@@ -388,6 +406,7 @@ class App(tk.Tk):
                 fg=COLOR_GREEN if m.down_capture < 1 else COLOR_RED)
 
     def _update_fundamentals(self, fundamentals):
+        # Row 0: Valuation
         pe_t = fundamentals.get("trailingPE")
         pe_f = fundamentals.get("forwardPE")
         dy   = fundamentals.get("dividendYield")
@@ -395,6 +414,7 @@ class App(tk.Tk):
         self._fundamental_vars["forwardPE"].set(f"{pe_f:.2f}" if pe_f else "N/A")
         self._fundamental_vars["dividendYield"].set(f"{dy:.2f}%" if dy else "N/A")
 
+        # Row 1: 52w proximity
         cur = fundamentals.get("currentPrice")
         h52 = fundamentals.get("fiftyTwoWeekHigh")
         l52 = fundamentals.get("fiftyTwoWeekLow")
@@ -405,6 +425,22 @@ class App(tk.Tk):
             f"{cur / l52 - 1:+.1%}" if cur and l52 else "N/A")
         self._fundamental_vars["fromPeriodHigh"].set(
             f"{cur / ph - 1:+.1%}" if cur and ph else "N/A")
+
+        # Row 2: Analyst targets
+        target = fundamentals.get("targetMeanPrice")
+        rec    = fundamentals.get("recommendationKey", "")
+        self._fundamental_vars["analystTarget"].set(f"${target:.2f}" if target else "N/A")
+        self._fundamental_vars["analystUpside"].set(
+            f"{target / cur - 1:+.1%}" if target and cur else "N/A")
+        self._fundamental_vars["analystConsensus"].set(rec.title() if rec else "N/A")
+
+        # Row 3: Options IV
+        atm_iv   = fundamentals.get("atm_iv")
+        iv_hv    = fundamentals.get("iv_hv_ratio")
+        pc_ratio = fundamentals.get("pc_oi_ratio")
+        self._fundamental_vars["atm_iv"].set(f"{atm_iv:.1%}" if atm_iv else "N/A")
+        self._fundamental_vars["iv_hv_ratio"].set(f"{iv_hv:.2f}×" if iv_hv else "N/A")
+        self._fundamental_vars["pc_oi_ratio"].set(f"{pc_ratio:.2f}" if pc_ratio else "N/A")
 
     def _show_chart_menu(self, event, figure):
         menu = tk.Menu(self, tearoff=0)

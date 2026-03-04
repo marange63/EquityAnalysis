@@ -14,7 +14,7 @@ def _get_dates(hist):
     return hist.index.tz_localize(None) if hist.index.tzinfo else hist.index
 
 
-def plot_price(ax, hist, symbol, period, log_scale=False, earnings_dates=None):
+def plot_price(ax, hist, symbol, period, log_scale=False, earnings_info=None, analyst_target=None):
     dates = _get_dates(hist)
 
     roll_ret = hist["Close"] / hist["Close"].shift(21) - 1
@@ -35,14 +35,29 @@ def plot_price(ax, hist, symbol, period, log_scale=False, earnings_dates=None):
     ax.grid(True, linestyle="--", alpha=0.4)
     plt.setp(ax.get_xticklabels(), visible=False)
 
-    if earnings_dates:
+    # Analyst price target band
+    if analyst_target:
+        mean = analyst_target.get("mean")
+        low  = analyst_target.get("low")
+        high = analyst_target.get("high")
+        if mean:
+            ax.axhline(mean, color=COLOR_BLUE, linewidth=0.9, linestyle="--", alpha=0.8,
+                       label=f"Target ${mean:.2f}")
+            if low and high:
+                ax.axhspan(low, high, alpha=0.06, color=COLOR_BLUE)
+            ax.legend(fontsize=7, loc="upper left")
+
+    # Earnings markers — line color shows EPS beat (green) / miss (red) / unknown (gray)
+    if earnings_info:
         hist_date_arr = np.array([d.date() for d in hist.index.to_pydatetime()])
         closes = hist["Close"].values
-        for ed in earnings_dates:
+        for ed, info in earnings_info.items():
             pos = np.searchsorted(hist_date_arr, ed)
             if 0 < pos < len(closes):
-                move = closes[pos] / closes[pos - 1] - 1
-                ax.axvline(x[pos], color=COLOR_DARK, linewidth=0.8, linestyle=":", alpha=0.7)
+                move     = closes[pos] / closes[pos - 1] - 1
+                surprise = info.get("surprise_pct")
+                line_clr = (COLOR_GREEN if surprise > 0 else COLOR_RED) if surprise is not None else COLOR_DARK
+                ax.axvline(x[pos], color=line_clr, linewidth=0.8, linestyle=":", alpha=0.7)
                 clr = COLOR_GREEN if move >= 0 else COLOR_RED
                 ax.text(x[pos], 0.97, f"{move:+.1%}",
                         transform=ax.get_xaxis_transform(),
