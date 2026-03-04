@@ -108,11 +108,15 @@ def plot_monthly_heatmap(ax, hist, symbol):
     ax.set_xticklabels(MONTH_LABELS, fontsize=8)
     ax.set_yticks(range(len(years)))
     ax.set_yticklabels(years, fontsize=8)
+    ax.set_xticks(np.arange(-0.5, 12, 1), minor=True)
+    ax.set_yticks(np.arange(-0.5, len(years), 1), minor=True)
+    ax.grid(which="minor", color="black", linewidth=0.5)
+    ax.tick_params(which="minor", bottom=False, left=False)
     for i in range(len(years)):
         for j in range(12):
             val = data[i, j]
             if not np.isnan(val):
-                ax.text(j, i, f"{val:.1%}", ha="center", va="center", fontsize=7)
+                ax.text(j, i, f"{val:.1%}", ha="center", va="center", fontsize=7, fontweight="bold")
     ax.set_title(f"{symbol} — Monthly Returns")
 
 
