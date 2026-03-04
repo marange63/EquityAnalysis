@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import matplotlib.ticker as mticker
 from matplotlib.collections import LineCollection
 
 from constants import (
@@ -32,6 +33,32 @@ def plot_price(ax, hist, symbol, period, log_scale=False):
     ax.set_title(f"{symbol} ({period}) — Close Price & Volume")
     ax.grid(True, linestyle="--", alpha=0.4)
     plt.setp(ax.get_xticklabels(), visible=False)
+
+
+def plot_scatter(ax, hist, bench_hist, symbol, bench_name):
+    stock_ret = hist["Close"].pct_change().dropna()
+    bench_ret = bench_hist["Close"].pct_change().dropna()
+    s, b = stock_ret.align(bench_ret, join="inner")
+
+    ax.scatter(b.values, s.values, alpha=0.4, s=8, color=COLOR_BLUE)
+
+    # OLS regression line (slope = beta)
+    m, c = np.polyfit(b.values, s.values, 1)
+    x_line = np.linspace(b.min(), b.max(), 100)
+    ax.plot(x_line, m * x_line + c, color=COLOR_RED, linewidth=1.2, label=f"β = {m:.2f}")
+
+    # Zero reference lines
+    ax.axhline(0, color="#aaaaaa", linewidth=0.5, linestyle="--")
+    ax.axvline(0, color="#aaaaaa", linewidth=0.5, linestyle="--")
+
+    pct_fmt = mticker.FuncFormatter(lambda v, _: f"{v:.1%}")
+    ax.xaxis.set_major_formatter(pct_fmt)
+    ax.yaxis.set_major_formatter(pct_fmt)
+    ax.set_xlabel(f"{bench_name} Daily Return")
+    ax.set_ylabel(f"{symbol} Daily Return")
+    ax.set_title(f"{symbol} vs {bench_name}")
+    ax.legend(fontsize=8)
+    ax.grid(True, linestyle="--", alpha=0.4)
 
 
 def plot_volume(ax, hist, figure):

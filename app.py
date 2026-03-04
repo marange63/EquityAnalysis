@@ -3,14 +3,13 @@ import tkinter as tk
 from tkinter import scrolledtext, ttk
 import threading
 
-import yfinance as yf
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 from constants import BENCH_TICKERS, PERIODS, INTERVALS
 from data import fetch_stock_data, fetch_benchmark
 from metrics import compute_metrics
-from chart import plot_price, plot_volume
+from chart import plot_price, plot_volume, plot_scatter
 
 
 class App(tk.Tk):
@@ -62,38 +61,33 @@ class App(tk.Tk):
                        command=self._toggle_log).pack(side=tk.LEFT, padx=(16, 0))
 
     def _build_panes(self):
-        outer = tk.PanedWindow(self, orient=tk.VERTICAL, sashrelief=tk.RAISED, sashwidth=6)
-        outer.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        # Outer horizontal split: left (output+metrics+charts) | right (scatter)
+        main_split = tk.PanedWindow(self, orient=tk.HORIZONTAL, sashrelief=tk.RAISED, sashwidth=6)
+        main_split.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+
+        # --- Left side ---
+        left_frame = tk.Frame(main_split)
+        main_split.add(left_frame, stretch="always")
+
+        outer = tk.PanedWindow(left_frame, orient=tk.VERTICAL, sashrelief=tk.RAISED, sashwidth=6)
+        outer.pack(fill=tk.BOTH, expand=True)
 
         top_row = tk.PanedWindow(outer, orient=tk.HORIZONTAL, sashrelief=tk.RAISED, sashwidth=6)
         outer.add(top_row, stretch="always")
 
-        # Output pane (left)
+        # Output pane
         self.output = scrolledtext.ScrolledText(
             top_row, font=("Courier", 10), state=tk.DISABLED,
             wrap=tk.NONE, padx=6, pady=6, height=10
         )
         top_row.add(self.output, stretch="always")
 
-        # Metrics pane (right)
+        # Metrics pane
         metrics_frame = tk.Frame(top_row, padx=14, pady=14, relief=tk.SUNKEN, bd=1)
         top_row.add(metrics_frame, stretch="never", minsize=200)
         self._build_metrics_pane(metrics_frame)
 
-        # Initial sash at half window width
-        _sash_set = False
-
-        def _set_sash(event=None):
-            nonlocal _sash_set
-            if _sash_set:
-                return
-            _sash_set = True
-            self.update_idletasks()
-            top_row.sash_place(0, self.winfo_width() // 2, 0)
-
-        self.bind("<Map>", _set_sash)
-
-        # Chart pane (bottom)
+        # Price + volume charts
         chart_frame = tk.Frame(outer)
         outer.add(chart_frame, stretch="always")
 
@@ -103,6 +97,29 @@ class App(tk.Tk):
 
         self.canvas = FigureCanvasTkAgg(self.figure, master=chart_frame)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # --- Right side: scatter pane ---
+        scatter_frame = tk.Frame(main_split)
+        main_split.add(scatter_frame, stretch="always")
+
+        self.scatter_fig = Figure(tight_layout=True)
+        self.ax_scatter  = self.scatter_fig.add_subplot(111)
+        self.scatter_canvas = FigureCanvasTkAgg(self.scatter_fig, master=scatter_frame)
+        self.scatter_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # Set initial sash positions once window is rendered
+        _sash_set = False
+
+        def _set_sash(_event=None):
+            nonlocal _sash_set
+            if _sash_set:
+                return
+            _sash_set = True
+            self.update_idletasks()
+            main_split.sash_place(0, int(self.winfo_width() * 0.65), 0)
+            top_row.sash_place(0, top_row.winfo_width() // 2, 0)
+
+        self.bind("<Map>", _set_sash)
 
     def _build_metrics_pane(self, frame):
         tk.Label(frame, text="Return Metrics", font=("Helvetica", 11, "bold"),
@@ -171,10 +188,16 @@ class App(tk.Tk):
             if hist is not None:
                 self.after(0, self._plot, hist, symbol, period)
                 self.after(0, self._update_metrics, hist, bench_hist, self.bench_var.get())
+                self.after(0, self._plot_scatter, hist, bench_hist, symbol, self.bench_var.get())
         except Exception as e:
             print(f"\nError: {e}")
         finally:
             self.run_btn.config(state=tk.NORMAL)
+
+    def _plot_scatter(self, hist, bench_hist, symbol, bench_name):
+        self.ax_scatter.cla()
+        plot_scatter(self.ax_scatter, hist, bench_hist, symbol, bench_name)
+        self.scatter_canvas.draw()
 
     def _toggle_log(self):
         if hasattr(self, "_last_plot"):
