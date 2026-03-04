@@ -27,7 +27,7 @@ No CLI arguments. The app launches a tkinter window directly.
 |------|---------------|
 | `main.py` | Entry point only (4 lines) |
 | `app.py` | `App(tk.Tk)` class + `_TextRedirector` |
-| `chart.py` | `plot_price()`, `plot_volume()` — pure matplotlib functions |
+| `chart.py` | `plot_price()`, `plot_volume()`, `plot_scatter()`, `plot_drawdown()`, `plot_rolling_beta()`, `plot_monthly_heatmap()` |
 | `metrics.py` | `compute_metrics()` — pure analytics |
 | `data.py` | `fetch_stock_data()`, `fetch_benchmark()` — yfinance calls |
 | `constants.py` | `BENCH_TICKERS`, `PERIODS`, `INTERVALS`, chart color constants |
@@ -40,11 +40,13 @@ No CLI arguments. The app launches a tkinter window directly.
 ┌─ top bar ─────────────────────────────────────────────────────────┐
 │ Symbol | Period | Interval | Benchmark | Run | Log Scale          │
 ├─ main_split (horizontal PanedWindow, 65% / 35%) ──────────────────┤
-│  ┌─ left: outer (vertical PanedWindow) ───┐  ┌─ scatter pane ───┐ │
-│  │ top_row: output  │ metrics             │  │ daily returns    │ │
-│  │ fundamentals bar (P/E, dividend yield) │  │ scatter vs bench │ │
-│  │ chart: ax_price (price line)           │  └──────────────────┘ │
-│  │        ax_vol   (volume bars)          │                       │
+│  ┌─ left: outer (vertical PanedWindow) ───┐  ┌─ right pane ────┐  │
+│  │ top_row: output  │ metrics             │  │ View: [dropdown]│  │
+│  │ fundamentals bar (P/E, dividend yield) │  │ • Returns Scatter│  │
+│  │ chart: ax_price (price line)           │  │ • Drawdown       │  │
+│  │        ax_vol   (volume bars)          │  │ • Rolling Beta   │  │
+│  └────────────────────────────────────────┘  │ • Monthly Heatmap│  │
+│                                              └──────────────────┘  │
 │  └────────────────────────────────────────┘                       │
 └───────────────────────────────────────────────────────────────────┘
 ```
@@ -65,14 +67,31 @@ No CLI arguments. The app launches a tkinter window directly.
 | Cumulative Return | `last / first − 1` |
 | Annualized Return (CAGR) | `(1 + cum)^(252/n) − 1` |
 | Sharpe Ratio | `mean(r) / std(r) × √252` (rf = 0) |
+| Sortino Ratio | `mean(r) × 252 / (std(downside r) × √252)` |
+| Calmar Ratio | `CAGR / |Max Drawdown|` — N/A if drawdown = 0 |
 | Max Drawdown | `min((close − rolling_max) / rolling_max)` — displayed red |
 | Beta | `Cov(stock, bench) / Var(bench)` — inner-aligned on dates |
 | Correlation | `np.corrcoef(stock_r, bench_r)[0,1]` |
 | R-Squared | `corr²` |
+| Up Capture | `mean(stock r on bench-up days) / mean(bench r on bench-up days)` |
+| Down Capture | `mean(stock r on bench-down days) / mean(bench r on bench-down days)` |
 
 Benchmark dropdown options: S&P 500 (`^GSPC`), NASDAQ 100 (`^NDX`), Dow Jones (`^DJI`), Russell 2000 (`^RUT`).
 
 Metrics rows use `pady=1` (no visible gap between rows). Rows are split into two groups — `return_rows` and `bench_rows` — rendered by a shared `_add_rows(rows, start)` helper. A `ttk.Separator` and "vs Benchmark" sub-header are inserted between the two groups. Each row tuple is `(key, label, fg)` — `fg=None` defaults to black, `fg="red"` used for Max Drawdown.
+
+### Right pane
+
+Controlled by a `View:` combobox at the top of the pane (`self.right_view_var`). Data is saved to `self._right_pane_data = (hist, bench_hist, symbol, bench_name)` on each fetch; `_redraw_right_pane()` is called both after fetch and on dropdown change (no re-fetch needed).
+
+| View | Function | Notes |
+|------|----------|-------|
+| Returns Scatter | `plot_scatter()` | OLS regression line, β label |
+| Drawdown | `plot_drawdown()` | filled area, y-axis as % |
+| Rolling Beta | `plot_rolling_beta()` | default window=21, β=1 reference line |
+| Monthly Heatmap | `plot_monthly_heatmap()` | `resample("ME")`, `RdYlGn` colormap, cell annotations |
+
+`autofmt_xdate(rotation=30)` is applied for Drawdown and Rolling Beta only (date x-axis). Monthly Heatmap has month-name x-axis — do not apply autofmt_xdate to it.
 
 ### Fundamentals bar
 
