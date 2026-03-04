@@ -38,7 +38,8 @@ def plot_price(ax, hist, symbol, period, log_scale=False, earnings_info=None, an
     ax.set_yscale("log" if log_scale else "linear")
     ax.set_ylim(bottom=hist["Close"].min() * 0.95)
     ax.set_ylabel("Price (USD, log)" if log_scale else "Price (USD)")
-    ax.set_title(f"{symbol} ({period}) — Close Price & Volume")
+    current_price = hist["Close"].iloc[-1]
+    ax.set_title(f"{symbol}  ${current_price:.2f}  ({period}) — Close Price & Volume")
     ax.grid(True, linestyle="--", alpha=0.4)
     plt.setp(ax.get_xticklabels(), visible=False)
 
@@ -206,11 +207,22 @@ def plot_monthly_heatmap(ax, hist, symbol):
 def plot_volume(ax, hist, figure):
     dates = _get_dates(hist)
 
-    med_vol = hist["Volume"].median()
-    vol_colors = [COLOR_BLUE if v >= med_vol else COLOR_ORANGE for v in hist["Volume"]]
-    ax.bar(dates, hist["Volume"], color=vol_colors, width=1.5)
+    dollar_vol = hist["Volume"] * hist["Close"]
+    med_vol = dollar_vol.median()
+    vol_colors = [COLOR_BLUE if v >= med_vol else COLOR_ORANGE for v in dollar_vol]
+    ax.bar(dates, dollar_vol, color=vol_colors, width=1.5)
     ax.axhline(med_vol, color=COLOR_DARK, linewidth=0.8, linestyle="--")
-    ax.set_ylabel("Volume")
+    max_val = dollar_vol.max()
+    ax.set_ylim(0, max_val * 1.10)
+    if max_val >= 1e9:
+        scale, suffix = 1e9, "B"
+    elif max_val >= 1e6:
+        scale, suffix = 1e6, "M"
+    else:
+        scale, suffix = 1e5, "00K"
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(
+        lambda v, _, s=scale, sfx=suffix: f"${v/s:.0f}{sfx}"))
+    ax.set_ylabel("Dollar Volume")
     ax.grid(True, linestyle="--", alpha=0.4)
     _auto_date_axis(ax)
     figure.autofmt_xdate(rotation=30, ha="right")

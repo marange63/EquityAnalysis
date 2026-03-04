@@ -30,6 +30,25 @@ _METRIC_TIPS = {
     "down_capture":   "Down Capture\nStock mean return on bench-down days / bench mean\n<100% = loses less in sell-offs",
 }
 
+_FUNDAMENTAL_TIPS = {
+    # Valuation
+    "trailingPE":       "Trailing P/E\nPrice / Earnings (last 12 months)\nHigher = more expensive vs recent earnings",
+    "forwardPE":        "Forward P/E\nPrice / Estimated Earnings (next 12 months)\nLower than trailing P/E implies earnings growth expected",
+    "dividendYield":    "Dividend Yield\nAnnual dividend / Current price\nAs reported by yfinance (already in % terms)",
+    # 52w proximity
+    "from52wHigh":      "% from 52-Week High\n(Current price / 52w High) − 1\nNegative = trading below the 52w peak",
+    "from52wLow":       "% from 52-Week Low\n(Current price / 52w Low) − 1\nPositive = trading above the 52w trough",
+    "fromPeriodHigh":   "% from Period High\n(Current price / highest close in selected period) − 1",
+    # Analyst
+    "analystTarget":    "Analyst Mean Price Target\nConsensus mean of sell-side analyst 12-month targets",
+    "analystUpside":    "Upside to Analyst Target\n(Mean target / Current price) − 1\nPositive = analysts expect appreciation",
+    "analystConsensus": "Analyst Consensus Rating\ne.g. Strong Buy, Buy, Hold, Sell\nFrom yfinance recommendationKey",
+    # Options
+    "atm_iv":           "ATM Implied Volatility\nAverage of nearest-strike call and put IV\nFor the nearest options expiry",
+    "iv_hv_ratio":      "IV / HV Ratio\nImplied Volatility / Historical Volatility (252d)\n>1 = options priced above recent realised vol\n<1 = options cheap relative to recent vol",
+    "pc_oi_ratio":      "Put / Call Open Interest Ratio\nTotal put OI / Total call OI for nearest expiry\n>1 = more put OI (bearish lean)\n<1 = more call OI (bullish lean)",
+}
+
 _METRIC_FORMATS = {
     "ann_vol":        lambda v: f"{v:.2%}",
     "cum_return":     lambda v: f"{v:+.2%}",
@@ -126,7 +145,7 @@ class App(tk.Tk):
                 return
             _sash_set = True
             self.update_idletasks()
-            main_split.sash_place(0, int(self.winfo_width() * 0.65), 0)
+            main_split.sash_place(0, int(self.winfo_width() * 0.50), 0)
             top_row.sash_place(0, top_row.winfo_width() // 2, 0)
             right_outer.sash_place(0, 0, int(right_outer.winfo_height() * 0.45))
 
@@ -280,8 +299,10 @@ class App(tk.Tk):
             pady = (0, 0) if row_idx == 0 else (4, 0)
             for col, (key, label) in enumerate(items):
                 padx = (0, 4) if col == 0 else (28, 4)
-                tk.Label(frame, text=label, fg="#555555").grid(
-                    row=row_idx, column=col * 2, sticky=tk.W, padx=padx, pady=pady)
+                lbl_text = tk.Label(frame, text=label, fg="#555555")
+                lbl_text.grid(row=row_idx, column=col * 2, sticky=tk.W, padx=padx, pady=pady)
+                if key in _FUNDAMENTAL_TIPS:
+                    _Tooltip(lbl_text, _FUNDAMENTAL_TIPS[key])
                 var = tk.StringVar(value="—")
                 self._fundamental_vars[key] = var
                 lbl = tk.Label(frame, textvariable=var, font=("Courier", 11, "bold"))
