@@ -96,8 +96,8 @@ Controlled by a `View:` combobox at the top of the pane (`self.right_view_var`).
 |------|----------|-------|
 | Returns Scatter | `plot_scatter()` | OLS regression line, β label |
 | Drawdown | `plot_drawdown()` | filled area, y-axis as % |
-| Rolling Beta | `plot_rolling_beta(window=63)` | β=1 reference line |
-| Rolling Sharpe | `plot_rolling_sharpe(window=63)` | Sharpe=1 reference line |
+| Rolling Beta | `plot_rolling_beta(window=63)` | LineCollection green/red by sign; β=1 reference line |
+| Rolling Sharpe | `plot_rolling_sharpe(window=63)` | LineCollection green/red by sign; Sharpe=1 reference line |
 | Monthly Heatmap | `plot_monthly_heatmap()` | `resample("ME")`, custom red/white/green colormap, cell annotations |
 
 `autofmt_xdate(rotation=30)` is applied for Drawdown, Rolling Beta, and Rolling Sharpe (date x-axis). Monthly Heatmap has month-name x-axis — do not apply `autofmt_xdate` to it.
@@ -107,7 +107,7 @@ Controlled by a `View:` combobox at the top of the pane (`self.right_view_var`).
 Compact horizontal pane (`stretch="never"`) between `top_row` and `chart_frame`. Four rows, three columns each — built by iterating `all_rows` list in `_build_fundamentals_pane()`:
 
 - **Row 0**: Trailing P/E · Forward P/E · Dividend Yield
-- **Row 1**: % from 52w High · % from 52w Low · % from Period High
+- **Row 1**: % from 52w High · % from 52w Low · % from Period High — value labels colored green (≥ 0) / red (< 0)
 - **Row 2**: Analyst Target ($) · Upside to Target (%) · Consensus (e.g. "Buy")
 - **Row 3**: ATM IV (%) · IV/HV ratio (×) · P/C OI ratio
 
