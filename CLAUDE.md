@@ -26,9 +26,9 @@ No CLI arguments. The app launches a tkinter window directly.
 | File | Responsibility |
 |------|---------------|
 | `main.py` | Entry point only (4 lines) |
-| `app.py` | `App(tk.Tk)` class + `_TextRedirector` |
+| `app.py` | `App(tk.Tk)`, `ComparisonWindow(tk.Toplevel)`, `_TextRedirector`, `_Tooltip` |
 | `chart.py` | `plot_price()`, `plot_volume()`, `plot_scatter()`, `plot_drawdown()`, `plot_rolling_beta()`, `plot_rolling_sharpe()`, `plot_monthly_heatmap()` |
-| `metrics.py` | `compute_metrics()` — pure analytics |
+| `metrics.py` | `Metrics` dataclass + `compute_metrics()` — pure analytics |
 | `data.py` | `fetch_stock_data()`, `fetch_benchmark()` — yfinance calls |
 | `constants.py` | `BENCH_TICKERS`, `PERIODS`, `INTERVALS`, chart color constants |
 
@@ -54,14 +54,18 @@ No CLI arguments. The app launches a tkinter window directly.
 
 **Metrics pane** default width = half the window width, set via `sash_place()` on `<Map>` with a `nonlocal` one-shot flag. Do not use `unbind(seq, funcid)` on Python 3.13 — throws `TclError` because `<Map>` fires once per child widget.
 
+- `_build_panes()` — delegates to `_build_left_pane(main_split)` (returns `top_row`) and `_build_right_pane(main_split)`; handles sash initialisation only
 - `_run()` — splits symbol on commas; if multiple tickers calls `_fetch_comparison()`, otherwise `_fetch()`; clears output pane on every run
-- `_fetch()` — fetches stock + benchmark; updates window title (`f"Equity Analysis — {symbol}  ${price:.2f}"`) and status bar; schedules `_plot()`, `_update_metrics()`, `_plot_scatter()`, `_update_fundamentals()` via `self.after(0, ...)`
-- `_fetch_comparison()` — iterates symbols, calls `compute_metrics()` per ticker, schedules `_show_comparison()` (Toplevel with `ttk.Treeview`)
+- `_fetch()` — fetches stock + benchmark; updates window title and status bar; schedules UI updates via `self.after(0, ...)`; `finally` uses `self.after(0, ...)` for button re-enable (thread-safe)
+- `_fetch_comparison()` — iterates symbols, calls `compute_metrics()` per ticker, schedules `_show_comparison()` → opens `ComparisonWindow`
+- `_update_metrics()` — calls `compute_metrics()`, iterates `self._metric_vars` with `_METRIC_FORMATS[key](getattr(m, key))`; overrides beta to append bench name
 - `_plot()` — saves args to `self._last_plot`; reads `self.log_var` to set `ax_price` y-scale; passes `earnings_dates` to `plot_price()`
 - `_toggle_log()` — re-calls `_plot(*self._last_plot)` if data exists; no re-fetch needed
 - `_show_chart_menu()` / `_save_chart()` — right-click context menu on either canvas; saves PNG/PDF/SVG via `filedialog.asksaveasfilename()`
 - `_TextRedirector` — redirects `sys.stdout` to the ScrolledText output pane (thread-safe via `widget.after`)
 - `_Tooltip` — `wm_overrideredirect(True)` Toplevel on `<Enter>`/`<Leave>`; attached to all metric label widgets using `_METRIC_TIPS` dict
+
+**Module-level dicts in `app.py`:** `_METRIC_TIPS` (tooltip text), `_METRIC_FORMATS` (format lambdas). Both are keyed by metric key string. `_METRIC_FORMATS` also covers `trailingPE` and `dividendYield` for `ComparisonWindow`.
 
 ### Metrics panel
 
@@ -123,7 +127,7 @@ Compact horizontal pane (`stretch="never"`) between `top_row` and `chart_frame`.
 
 ### Multi-ticker comparison
 
-Enter comma-separated tickers (e.g. `AAPL, MSFT, GOOG`). `_fetch_comparison()` fetches each in sequence, calls `compute_metrics()`, then opens a `tk.Toplevel` with a `ttk.Treeview` showing 14 rows (all metrics + Trailing P/E + Dividend Yield) × N ticker columns.
+Enter comma-separated tickers (e.g. `AAPL, MSFT, GOOG`). `_fetch_comparison()` fetches each in sequence, calls `compute_metrics()`, then opens a `ComparisonWindow(tk.Toplevel)`. The window renders 14 rows (all `Metrics` fields + Trailing P/E + Dividend Yield) × N ticker columns using `_METRIC_FORMATS` for formatting and `hasattr(metrics, key)` to distinguish metric fields from fundamentals dict keys.
 
 ### Earnings overlay
 
