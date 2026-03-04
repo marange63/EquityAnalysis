@@ -23,10 +23,16 @@ No CLI arguments. The app launches a tkinter window directly.
 
 ## Architecture
 
-Everything lives in `main.py`. Two pure functions feed the `App` UI class:
+| File | Responsibility |
+|------|---------------|
+| `main.py` | Entry point only (4 lines) |
+| `app.py` | `App(tk.Tk)` class + `_TextRedirector` |
+| `chart.py` | `plot_price()`, `plot_volume()` — pure matplotlib functions |
+| `metrics.py` | `compute_metrics()` — pure analytics |
+| `data.py` | `fetch_stock_data()`, `fetch_benchmark()` — yfinance calls |
+| `constants.py` | `BENCH_TICKERS`, `PERIODS`, `INTERVALS`, chart color constants |
 
-- **`fetch_stock_data(ticker, period, interval)`** — calls `yf.Ticker`, prints a company summary to stdout, returns a `DataFrame` of OHLCV history.
-- **`compute_metrics(hist, bench_hist)`** — takes the stock and benchmark DataFrames, returns a tuple: `(ann_vol, cum_return, ann_cum_return, sharpe, max_drawdown, beta)`.
+`data.py` and `metrics.py` have no tkinter/matplotlib imports and are independently usable (e.g. in notebooks).
 
 ### UI layout (`App(tk.Tk)`)
 
