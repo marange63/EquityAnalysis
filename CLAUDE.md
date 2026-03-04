@@ -37,14 +37,15 @@ No CLI arguments. The app launches a tkinter window directly.
 ### UI layout (`App(tk.Tk)`)
 
 ```
-┌─ top bar ──────────────────────────────────────────┐
-│ Symbol | Period | Interval | Benchmark | Run | Log Scale │
-├─ top_row (horizontal PanedWindow) ─────────────────┤
-│  output (ScrolledText)  │  metrics (Return Metrics) │
-├─ chart_frame ──────────────────────────────────────┤
-│  ax_price  (LineCollection, colored by 21d return)  │
-│  ax_vol    (bars colored by median, median hline)   │
-└─────────────────────────────────────────────────────┘
+┌─ top bar ─────────────────────────────────────────────────────────┐
+│ Symbol | Period | Interval | Benchmark | Run | Log Scale          │
+├─ main_split (horizontal PanedWindow, 65% / 35%) ──────────────────┤
+│  ┌─ left: outer (vertical PanedWindow) ───┐  ┌─ scatter pane ───┐ │
+│  │ top_row: output  │ metrics             │  │ daily returns    │ │
+│  │ chart: ax_price (price line)           │  │ scatter vs bench │ │
+│  │        ax_vol   (volume bars)          │  └──────────────────┘ │
+│  └────────────────────────────────────────┘                       │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
 **Metrics pane** default width = half the window width, set via `sash_place()` on `<Map>` with a `nonlocal` one-shot flag. Do not use `unbind(seq, funcid)` on Python 3.13 — throws `TclError` because `<Map>` fires once per child widget.
